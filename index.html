@@ -461,6 +461,25 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <p class="note" id="mLipNote"></p>
       </section>
 
+      <section class="card c" id="nfcCard">
+        <h3>Hidden NFC chip pocket</h3>
+        <label class="check"><input type="checkbox" id="nfcOn"> Add a hidden pocket inside the print for an NFC chip</label>
+        <div id="nfcOpts">
+          <div class="row">
+            <label class="f" for="nfcD">Pocket diameter<span class="unit" data-unit="mm"><input type="number" id="nfcD" min="5" max="120" step="0.5" value="26"></span></label>
+            <label class="f" for="nfcH">Pocket depth<span class="unit" data-unit="mm"><input type="number" id="nfcH" min="0.2" max="10" step="0.1" value="1.2"></span></label>
+            <label class="f" for="nfcCover">Plastic above chip<span class="unit" data-unit="mm"><input type="number" id="nfcCover" min="0.4" max="5" step="0.1" value="0.8"></span></label>
+          </div>
+          <div class="row">
+            <label class="f" for="nfcLayer">Bambu layer height<select id="nfcLayer"><option value="0.08">0.08 mm</option><option value="0.12">0.12 mm</option><option value="0.16">0.16 mm</option><option value="0.2" selected>0.20 mm</option><option value="0.24">0.24 mm</option><option value="0.28">0.28 mm</option></select></label>
+            <label class="f" for="nfcDx">Move right<span class="unit" data-unit="mm"><input type="number" id="nfcDx" step="0.5" value="0"></span></label>
+            <label class="f" for="nfcDy">Move up<span class="unit" data-unit="mm"><input type="number" id="nfcDy" step="0.5" value="0"></span></label>
+          </div>
+          <p class="status" id="nfcInfo"></p>
+          <p class="note">The pocket is sealed inside the part, centered where the part is widest. It's lined up with your layer height so the pause lands exactly on top of it. Shown as a dashed outline in the 3D view.</p>
+        </div>
+      </section>
+
       <section class="card c">
         <h3>Printability checks</h3>
         <label class="f" for="nozzle">Bambu nozzle
@@ -1180,6 +1199,55 @@ async function buildBase(sp, d, lock, driver, src, t) {
   const out = [], lip = solidOut(out, r, sx, sy, sp, t);
   return { kind: "cutout", tris: new Float32Array(out), frame: r.frame, polys: r.polys, bb: r.bb, sx, sy, t, natAspect: r.bh / r.bw, ...lip };
 }
+/* hidden NFC pocket: a sealed cylindrical cavity (inward-facing shell) inside the solid */
+function zHits(T, x, y) { // heights where a vertical line at (x, y) crosses the surface, sorted
+  const out = [];
+  for (let o = 0; o < T.length; o += 9) {
+    const ax = T[o], ay = T[o + 1], bx = T[o + 3], by = T[o + 4], cx = T[o + 6], cy = T[o + 7];
+    if ((x < ax && x < bx && x < cx) || (x > ax && x > bx && x > cx) || (y < ay && y < by && y < cy) || (y > ay && y > by && y > cy)) continue;
+    const den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (Math.abs(den) < 1e-12) continue;
+    const l1 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / den, l2 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / den, l3 = 1 - l1 - l2;
+    if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+    out.push(l1 * T[o + 2] + l2 * T[o + 5] + l3 * T[o + 8]);
+  }
+  out.sort((a, b) => a - b); const u = []; for (const z of out) if (!u.length || z - u[u.length - 1] > 1e-5) u.push(z); return u;
+}
+function footprintCenter(T) { // point of the top-view footprint farthest from its edge (centre of a coaster, middle of a keychain body)
+  const b = triBBox(T), W = b[3] - b[0], H = b[4] - b[1], R = Math.min(5, 500 / Math.max(W, H)), gw = Math.ceil(W * R) + 4, gh = Math.ceil(H * R) + 4;
+  const c = document.createElement("canvas"); c.width = gw; c.height = gh; const g = c.getContext("2d", { willReadFrequently: true }); g.fillStyle = "#fff"; g.beginPath(); let n = 0;
+  for (let o = 0; o < T.length; o += 9) {
+    const ax = (T[o] - b[0]) * R + 2, ay = (b[4] - T[o + 1]) * R + 2, bx = (T[o + 3] - b[0]) * R + 2, by = (b[4] - T[o + 4]) * R + 2, cx = (T[o + 6] - b[0]) * R + 2, cy = (b[4] - T[o + 7]) * R + 2;
+    const cr = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax); if (Math.abs(cr) < 1e-9) continue; // same winding for every triangle, so stacked faces add up instead of cancelling
+    g.moveTo(ax, ay); if (cr > 0) { g.lineTo(bx, by); g.lineTo(cx, cy); } else { g.lineTo(cx, cy); g.lineTo(bx, by); } g.closePath(); if (++n === 256) { g.fill("nonzero"); g.beginPath(); n = 0; }
+  }
+  g.fill("nonzero"); const F = alphaField(g, gw, gh), D = edt(i => F[i] < 0.5, gw, gh); let best = -1, bi = 0;
+  for (let i = 0; i < gw * gh; i++) if (D[i] > best) { best = D[i]; bi = i; }
+  // symmetric parts: if the exact middle of the footprint is (within a pixel) as deep inside as the best spot, use the exact middle
+  const ci = Math.round((b[4] - (b[1] + b[4]) / 2) * R + 2 - 0.5) * gw + Math.round(((b[0] + b[3]) / 2 - b[0]) * R + 2 - 0.5);
+  if (D[ci] >= 0 && Math.sqrt(D[ci]) >= Math.sqrt(best) - 1) return { x: (b[0] + b[3]) / 2, y: (b[1] + b[4]) / 2 };
+  return { x: b[0] + ((bi % gw) - 2 + 0.5) / R, y: b[4] - (((bi / gw) | 0) - 2 + 0.5) / R };
+}
+function addPocket(base, nf) {
+  const T = base.tris, r = nf.d / 2, L = +nf.layer || 0.2, cover = Math.max(0, +nf.cover || 0), c0 = footprintCenter(T), cx = c0.x + (+nf.dx || 0), cy = c0.y + (+nf.dy || 0);
+  const j = 1e-3 * Math.PI, hc = zHits(T, cx + j, cy + j * 1.3);
+  if (hc.length < 2 || hc.length % 2) return { err: "There's no solid material at the pocket's center. Move the pocket onto the part." };
+  const zt = hc[hc.length - 1], zb = hc[hc.length - 2], depth = Math.ceil(nf.h / L - 1e-6) * L, top = Math.floor((zt - cover) / L + 1e-6) * L, bot = +(top - depth).toFixed(4);
+  const need = depth + cover + 0.6;
+  if (bot < zb + 0.6 - 1e-6) return { err: `The part is ${(zt - zb).toFixed(1)} mm thick at the pocket. A ${depth.toFixed(2)} mm pocket with ${cover} mm on top needs at least ${need.toFixed(1)} mm (0.6 mm below). Make Z taller or the pocket thinner.` };
+  // the pocket must sit inside solid material all round: check its rim (plus 0.8 mm wall) and its inside
+  const pts = []; for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2 + 0.013; pts.push([r + 0.8, a, bot, top]); pts.push([r * 0.95, a, bot - 0.4, top + 0.4]); pts.push([r * 0.5, a, bot - 0.4, top + 0.4]); }
+  for (const [rr, a, lo, hi] of pts) { const z = zHits(T, cx + rr * Math.cos(a) + j, cy + rr * Math.sin(a) + j * 1.3); let ok = false; for (let i = 0; i + 1 < z.length; i += 2) if (z[i] <= lo + 1e-6 && z[i + 1] >= hi - 1e-6) ok = true; if (!ok) return { err: `A ${nf.d} mm pocket doesn't fit inside the part here: it would break through ${rr > r ? "the side" : "the top or bottom"}. Make the pocket smaller, move it, or make the part bigger.` }; }
+  // inward-facing cylinder (normals point into the cavity)
+  const n = Math.max(48, Math.min(160, Math.round(nf.d * 3))), out = [], P = k => { const a = k / n * Math.PI * 2; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+  for (let k = 0; k < n; k++) {
+    const [ax, ay] = P(k), [bx, by] = P(k + 1);
+    out.push(cx, cy, top, bx, by, top, ax, ay, top);           // ceiling faces down, into the pocket
+    out.push(cx, cy, bot, ax, ay, bot, bx, by, bot);           // floor faces up, into the pocket
+    out.push(ax, ay, bot, ax, ay, top, bx, by, bot, bx, by, bot, ax, ay, top, bx, by, top); // wall faces inward
+  }
+  const merged = new Float32Array(T.length + out.length); merged.set(T); merged.set(out, T.length); base.tris = merged;
+  return { cx, cy, r, top, bot, depth, cover: +(zt - top).toFixed(3), layer: L, pauseZ: +(top + L).toFixed(3), pauseLayer: Math.round((top + L) / L) };
+}
 async function genBase() {
   const sp = S.spec, d = S.dims, fh = featHeight();
   if (sp.kind === "stl") {
@@ -1318,6 +1386,14 @@ function selectSurface(sel) {
 /* =========================================================
    mesh validation: watertight, manifold, orientation, degenerate, shells
    ========================================================= */
+// Möller–Trumbore: does the ray from p along d hit triangle at offset o of T (t > 0)?
+function rayTri(px, py, pz, d, T, o) {
+  const e1x = T[o + 3] - T[o], e1y = T[o + 4] - T[o + 1], e1z = T[o + 5] - T[o + 2], e2x = T[o + 6] - T[o], e2y = T[o + 7] - T[o + 1], e2z = T[o + 8] - T[o + 2];
+  const hx = d[1] * e2z - d[2] * e2y, hy = d[2] * e2x - d[0] * e2z, hz = d[0] * e2y - d[1] * e2x, a = e1x * hx + e1y * hy + e1z * hz; if (Math.abs(a) < 1e-12) return false;
+  const f = 1 / a, sx = px - T[o], sy = py - T[o + 1], sz = pz - T[o + 2], u = f * (sx * hx + sy * hy + sz * hz); if (u < 0 || u > 1) return false;
+  const qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x, v = f * (d[0] * qx + d[1] * qy + d[2] * qz); if (v < 0 || u + v > 1) return false;
+  return f * (e2x * qx + e2y * qy + e2z * qz) > 1e-7;
+}
 function validateMesh(T) {
   const nt0 = T.length / 9, keep = [];
   for (let i = 0; i < nt0; i++) if (triNormal(T, i)[3] > 1e-9) keep.push(i);
@@ -1334,11 +1410,16 @@ function validateMesh(T) {
   for (let t = 0; t < nt; t++) for (let e = 0; e < 3; e++) { const n = adj.nbr[t * 3 + e]; if (n >= 0) { const a = find(t), b = find(n); if (a !== b) par[a] = b; } }
   const vol = new Map();
   for (let t = 0; t < nt; t++) { const o = t * 9, v = (C[o] * (C[o + 4] * C[o + 8] - C[o + 5] * C[o + 7]) - C[o + 1] * (C[o + 3] * C[o + 8] - C[o + 5] * C[o + 6]) + C[o + 2] * (C[o + 3] * C[o + 7] - C[o + 4] * C[o + 6])) / 6; const r = find(t); vol.set(r, (vol.get(r) || 0) + v); }
-  const shells = [...vol.entries()], inverted = shells.filter(s => s[1] < 0).map(s => s[0]);
+  const shells = [...vol.entries()];
+  // a negative shell sitting inside a positive one is a sealed cavity (e.g. an NFC pocket), not an inside-out shell
+  const pos = shells.filter(s => s[1] > 0).map(s => s[0]), firstTri = new Map(); for (let t = nt - 1; t >= 0; t--) firstTri.set(find(t), t);
+  const insidePos = (px, py, pz) => { const d = [0.5383, 0.6129, 0.5786]; for (const sh of pos) { let c = 0; for (let t = 0; t < nt; t++) if (find(t) === sh && rayTri(px, py, pz, d, C, t * 9)) c++; if (c % 2) return true; } return false; };
+  const cavities = shells.filter(s => s[1] < 0 && insidePos(C[firstTri.get(s[0]) * 9], C[firstTri.get(s[0]) * 9 + 1], C[firstTri.get(s[0]) * 9 + 2])).map(s => s[0]), cav = new Set(cavities);
+  const inverted = shells.filter(s => s[1] < 0 && !cav.has(s[0])).map(s => s[0]);
   // safe repair: flip shells whose volume is negative
   if (inverted.length) { const inv = new Set(inverted); for (let t = 0; t < nt; t++) if (inv.has(find(t))) { const o = t * 9; for (let j = 0; j < 3; j++) { const tmp = C[o + 3 + j]; C[o + 3 + j] = C[o + 6 + j]; C[o + 6 + j] = tmp; } } }
-  const volume = shells.reduce((a, s) => a + Math.abs(s[1]), 0);
-  return { triangles: nt0, degenerate: nt0 - nt, open, nonman, flip, shells: shells.length, inverted: inverted.length, volume, clean: C, ok: open === 0 && nonman === 0 && flip === 0 };
+  const volume = shells.reduce((a, s) => a + (cav.has(s[0]) ? s[1] : Math.abs(s[1])), 0);
+  return { triangles: nt0, degenerate: nt0 - nt, open, nonman, flip, shells: shells.length, inverted: inverted.length, cavities: cavities.length, volume, clean: C, ok: open === 0 && nonman === 0 && flip === 0 };
 }
 // 2D check that outline loops never cross themselves or each other (the extruded solid then has no self-intersections)
 function loopsIntersect(loops) {
@@ -1753,6 +1834,13 @@ function update3d() {
     const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
     V.root.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xc8f26d })));
   }
+  if (S.base.pocket) {
+    const k = S.base.pocket, seg = [], n = 64;
+    for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2, b = (i + 1) / n * Math.PI * 2; for (const z of [k.top, k.bot]) seg.push(k.cx + k.r * Math.cos(a), k.cy + k.r * Math.sin(a), z, k.cx + k.r * Math.cos(b), k.cy + k.r * Math.sin(b), z); }
+    for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; seg.push(k.cx + k.r * Math.cos(a), k.cy + k.r * Math.sin(a), k.bot, k.cx + k.r * Math.cos(a), k.cy + k.r * Math.sin(a), k.top); }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+    const ln = new THREE.LineSegments(g, new THREE.LineDashedMaterial({ color: 0x7fd0ff, dashSize: 1.2, gapSize: 0.8, depthTest: false, transparent: true, opacity: 0.9 })); ln.computeLineDistances(); ln.renderOrder = 5; V.root.add(ln);
+  }
   V.pickMesh = new THREE.Mesh(mk(all.slice()), new THREE.MeshBasicMaterial()); V.pickMesh.matrixAutoUpdate = false; V.pickMesh.matrix.copy(M);
   // plate
   const P = PRINTERS[$("printer").value];
@@ -1859,8 +1947,10 @@ async function rebuild() {
   try {
     await ensureFont($("ltFont").value);
     const base = await genBase(); if (id !== genId) return;
+    const nf = S.spec.nfc; base.pocket = null; base.pocketErr = null;
+    if (nf && nf.on) { const pk = addPocket(base, nf); if (pk.err) base.pocketErr = pk.err; else base.pocket = pk; }
     S.base = base;
-    S.adj = base.kind === "stl" ? (S.stl.adj || (S.stl.adj = buildAdj(S.stl.tris))) : buildAdj(base.tris);
+    S.adj = base.kind === "stl" && !base.pocket ? (S.stl.adj || (S.stl.adj = buildAdj(S.stl.tris))) : buildAdj(base.tris);
     selectSurface(S.surfSel);
     writeDims(); refreshArt(true); showMsg("");
   } catch (e) { if (id !== genId) return; console.error(e); showMsg(e instanceof UserError ? e.message : "Something went wrong building the model: " + e.message); }
@@ -1917,6 +2007,10 @@ function updateInfo() {
   if (isCut) { const o = $("mOutline").value; $("mMarginRow").classList.toggle("hidden", o !== "follow"); $("mFillRow").classList.toggle("hidden", o !== "follow"); $("mRadiusRow").classList.toggle("hidden", o !== "rounded"); $("mHoleRow").classList.toggle("hidden", $("mRing").value === "none");
     const lipOn = $("mLip").checked; $("mLipOpts").classList.toggle("hidden", !lipOn); $("mLipNote").classList.toggle("hidden", !lipOn);
     if (lipOn && S.base && S.base.lip) $("mLipNote").textContent = `Total height ${fmtU(S.dims.z)} (Z) = ${fmtU(S.base.t)} floor + ${fmtU(S.base.lip.h)} lip. Change Z to make it taller or shorter. The Omni prints the surface inside the lip; tap the lip in the 3D view if you want to print on it instead.`; }
+  $("nfcOpts").classList.toggle("hidden", !$("nfcOn").checked);
+  if (S.base && S.base.pocket) { const k = S.base.pocket; $("nfcInfo").className = "status ok"; $("nfcInfo").textContent = `Pocket ${(k.r * 2).toFixed(1)} mm round × ${k.depth.toFixed(2)} mm deep, from ${k.bot.toFixed(2)} to ${k.top.toFixed(2)} mm, with ${k.cover.toFixed(2)} mm of plastic on top. In Bambu Studio, add a pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer} at ${k.layer} mm layers), drop the chip in when it pauses, then resume.`; }
+  else if (S.base && S.base.pocketErr) { $("nfcInfo").className = "status err"; $("nfcInfo").textContent = S.base.pocketErr; }
+  else $("nfcInfo").textContent = "";
   $("reliefRow").classList.toggle("hidden", $("fStyle").value !== "relief");
   $("bgRow").classList.toggle("hidden", $("bgFill").value !== "ink"); $("gradRow").classList.toggle("hidden", $("bgFill").value !== "ink"); $("bg2Row").classList.toggle("hidden", !$("grad").checked);
   const canChange = !!S.design && S.aiOn; $("aChangeRow").classList.toggle("hidden", !canChange); $("aChangeBtns").classList.toggle("hidden", !canChange);
@@ -1957,7 +2051,12 @@ function specFromProduct(key, overrides) {
   const p = PRODUCTS[key] || PRODUCTS.keychain;
   return Object.assign({ kind: p.kind, shape: p.shape || "rounded", radius: p.radius || 4, margin: p.margin || 2, fillHoles: true, ring: p.ring || "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!p.lip, lipH: 2, lipW: 3, product: key }, overrides || {});
 }
+function syncNfc() {
+  const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 0.8;
+  $("nfcLayer").value = String(nf.layer || 0.2); $("nfcDx").value = nf.dx || 0; $("nfcDy").value = nf.dy || 0;
+}
 function syncModelControls() {
+  syncNfc();
   const sp = S.spec; if (!sp || sp.kind === "stl") return;
   $("mOutline").value = sp.kind === "cutout" ? "follow" : sp.shape; $("mRing").value = sp.ring; $("mMargin").value = sp.margin; $("mRadius").value = sp.radius; $("mHole").value = sp.holeD; $("mFill").checked = sp.fillHoles; $("mRingDx").value = sp.ringDx || 0; $("mRingDy").value = sp.ringDy || 0;
   $("mLip").checked = !!sp.lip; $("mLipH").value = sp.lipH || 2; $("mLipW").value = sp.lipW || 3;
@@ -2140,6 +2239,7 @@ function readme(G, name) {
   return [name, "",
     `MODEL (STL, millimetres): ${(wb[3] - wb[0]).toFixed(2)} x ${(wb[4] - wb[1]).toFixed(2)} x ${(wb[5] - wb[2]).toFixed(2)} mm, placed for the Bambu ${P[3]}.`,
     `PRINT SURFACE: ${sf.label}, ${sf.W.toFixed(2)} x ${sf.H.toFixed(2)} mm.`,
+    ...(S.base.pocket ? [`HIDDEN NFC POCKET: ${(S.base.pocket.r * 2).toFixed(1)} mm round, ${S.base.pocket.depth.toFixed(2)} mm deep, ${S.base.pocket.bot.toFixed(2)}-${S.base.pocket.top.toFixed(2)} mm from the bottom. In Bambu Studio add a pause at ${S.base.pocket.pauseZ.toFixed(2)} mm (layer ${S.base.pocket.pauseLayer} at ${S.base.pocket.layer} mm layer height). Insert the chip when it pauses, then resume.`] : []),
     `ARTWORK AREA: ${G.artW.toFixed(3)} x ${G.artH.toFixed(3)} mm (the printable surface).`,
     `PRINT IMAGE CANVAS: ${G.wmm.toFixed(3)} x ${G.hmm.toFixed(3)} mm = artwork + ${G.bleed.toFixed(2)} mm bleed + ${G.reg.toFixed(2)} mm registration margin on each side.`,
     `PIXELS: ${G.w} x ${G.h} px = round(mm / 25.4 x ${G.ppi}); effective ${G.effX.toFixed(3)} x ${G.effY.toFixed(3)} ppi; PNG pHYs ${G.ppmX} x ${G.ppmY} px/m.`,
@@ -2190,7 +2290,8 @@ function exportChecks() {
   rows.push([dimOk ? "pass" : "fail", `Model ${v.model.x.toFixed(3)} × ${v.model.y.toFixed(3)} × ${v.model.z.toFixed(3)} mm vs requested ${d.x.toFixed(3)} × ${d.y.toFixed(3)} × ${d.z.toFixed(3)} mm (tolerance ±${tol} mm). STL units: millimetres.`]);
   if (S.rot.x || S.rot.y || S.rot.z) { const wb = worldBBox(); rows.push(["info", `Rotated on the plate: footprint ${(wb[3] - wb[0]).toFixed(2)} × ${(wb[4] - wb[1]).toFixed(2)} × ${(wb[5] - wb[2]).toFixed(2)} mm.`]); }
   const meshOk = v.ok;
-  rows.push([meshOk ? "pass" : "fail", `Mesh: ${v.triangles.toLocaleString()} triangles · ${v.open} open edges · ${v.nonman} non-manifold edges · ${v.flip} inconsistently oriented edges · ${v.shells} shell${v.shells === 1 ? "" : "s"}.` + (v.degenerate ? ` Removed ${v.degenerate} zero-area triangle${v.degenerate === 1 ? "" : "s"} (safe repair).` : "") + (v.inverted ? ` Flipped ${v.inverted} inside-out shell${v.inverted === 1 ? "" : "s"} (safe repair).` : "")]);
+  rows.push([meshOk ? "pass" : "fail", `Mesh: ${v.triangles.toLocaleString()} triangles · ${v.open} open edges · ${v.nonman} non-manifold edges · ${v.flip} inconsistently oriented edges · ${v.shells} shell${v.shells === 1 ? "" : "s"}.` + (v.degenerate ? ` Removed ${v.degenerate} zero-area triangle${v.degenerate === 1 ? "" : "s"} (safe repair).` : "") + (v.inverted ? ` Flipped ${v.inverted} inside-out shell${v.inverted === 1 ? "" : "s"} (safe repair).` : "") + (v.cavities ? ` ${v.cavities} sealed pocket${v.cavities === 1 ? "" : "s"} inside (kept as an empty space).` : "")]);
+  if (S.base.pocket) rows.push(["info", `Hidden NFC pocket: pause at ${S.base.pocket.pauseZ.toFixed(2)} mm (layer ${S.base.pocket.pauseLayer} at ${S.base.pocket.layer} mm layers) to insert the chip.`]);
   const detailShells = S.feat && S.feat.length ? " Raised details are separate closed shells that overlap the base by 0.05–0.2 mm on purpose; Bambu Studio merges overlapping shells when slicing (pending physical verification)." : "";
   if (v.shells > 1) rows.push(["info", `${v.shells} closed shells in one STL.` + detailShells + (S.artImg && S.artImg.pieces > 1 ? ` The outline itself has ${S.artImg.pieces} separate pieces.` : "")]);
   rows.push(v.selfX === null ? ["info", "Self-intersection check runs on generated outlines; imported STLs are checked for open and non-manifold edges only."] : [v.selfX === 0 ? "pass" : "fail", `Outline self-intersections: ${v.selfX}.`]);
@@ -2649,6 +2750,18 @@ const TESTS = [
     const ok = near(d[0], 95, 0.03) && near(d[1], 95, 0.03) && near(d[2], 4, 0.001) && tMeshOk(m) && m.v.shells === 1 && near(fl.d, 2, 0.001) && near(fl.W, 89, 0.15) && near(lipTop.d, 4, 0.001) && near(m.v.volume, exp, exp * 0.01);
     return [ok, `${tMeshTxt(m)}; floor ${fl.W.toFixed(2)} mm wide at z ${fl.d.toFixed(2)}, lip top z ${lipTop.d.toFixed(2)}; volume ${m.v.volume.toFixed(0)} vs ${exp.toFixed(0)} mm³`];
   }],
+  ["8c · coaster with hidden 26 mm NFC pocket", async () => {
+    const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 99.98, 99.99, 4), base = { tris: m.r.tris }, pk = addPocket(base, { on: true, d: 26, h: 1.2, cover: 0.8, layer: 0.2, dx: 0, dy: 0 });
+    if (pk.err) return [false, pk.err];
+    const v = validateMesh(base.tris), v0 = m.v, hole = v0.volume - v.volume, exp = Math.PI * 13 * 13 * 1.2, d = tDims(triBBox(base.tris));
+    const ok = v.ok && v.shells === 2 && v.cavities === 1 && v.inverted === 0 && near(hole, exp, exp * 0.01) && near(pk.top, 3.2, 1e-6) && near(pk.bot, 2.0, 1e-6) && near(pk.pauseZ, 3.4, 1e-6) && near(pk.cx, 49.99, 0.3) && near(pk.cy, 49.995, 0.3) && near(d[2], 6, 0.001);
+    const rt = validateMesh(v.clean); // the exported mesh must keep the pocket hollow
+    return [ok && rt.cavities === 1 && rt.inverted === 0, `${v.shells} shells, ${v.cavities} sealed pocket, pocket volume ${hole.toFixed(1)} vs ${exp.toFixed(1)} mm³, z ${pk.bot}-${pk.top} mm, centre ${pk.cx.toFixed(2)}, ${pk.cy.toFixed(2)}; pause at ${pk.pauseZ} mm (layer ${pk.pauseLayer})`];
+  }],
+  ["8d · NFC pocket refuses a part that is too thin", async () => {
+    const m = await tBuildShape({ shape: "oval" }, 50, 50, 2), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 0.8, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 60, h: 0.4, cover: 0.6, layer: 0.2 });
+    return [!!pk.err && !!pk2.err, `2 mm part: "${pk.err}" · too wide: "${pk2.err}"`];
+  }],
   ["Shape · rectangle, heart and concave C outline", async () => {
     const r1 = await tBuildShape({ shape: "rect" }, 100, 60, 5), r2 = await tBuildShape({ shape: "heart" }, 80, 72, 4);
     const c = tcan(600, 600, g => { g.fillStyle = "#c63"; g.beginPath(); g.arc(300, 300, 260, 0.6, Math.PI * 2 - 0.6); g.arc(300, 300, 140, Math.PI * 2 - 0.6, 0.6, true); g.closePath(); g.fill(); });
@@ -3092,6 +3205,11 @@ function lipChanged() {
   specFromControls(); updateInfo(); scheduleGeo();
 }
 for (const id of ["mLip", "mLipH", "mLipW"]) $(id).addEventListener("input", lipChanged);
+for (const id of ["nfcOn", "nfcD", "nfcH", "nfcCover", "nfcLayer", "nfcDx", "nfcDy"]) $(id).addEventListener("input", () => {
+  if (!S.spec) return;
+  S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 0.8, 0.4, 5), layer: +$("nfcLayer").value || 0.2, dx: +$("nfcDx").value || 0, dy: +$("nfcDy").value || 0 };
+  updateInfo(); scheduleGeo();
+});
 // Adding, moving or resizing the key ring tab on a plain shape keeps the shape itself the same size:
 // the tab is added on top of X/Y (which stay the overall size), so a 50 mm circle stays a 50 mm circle.
 async function tabGrowth(sp, W, H) { if (sp.ring === "none") return [0, 0]; const r = await bodyRaster(sp, W, H); return [r.bw - W, r.bh - H]; }
