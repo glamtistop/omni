@@ -384,6 +384,8 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <div class="btns">
           <button class="btn small" id="tplSvg">Template .svg (exact size)</button>
           <button class="btn small" id="tplPng">Template .png</button>
+          <button class="btn small" id="topFaceBtn">Top face</button>
+          <button class="btn small" id="botFaceBtn">Bottom face (face down)</button>
           <button class="btn small" id="tvBtn">Whole model from above</button>
         </div>
         <p class="status" id="tplStatus"></p>
@@ -3057,6 +3059,14 @@ document.querySelectorAll('input[name="pmode"]').forEach(r => r.addEventListener
 $("pW").addEventListener("input", e => { const v = u2mm(parseFloat(e.target.value)); if (!(v > 0)) return; S.keepW = v; setMode("keep"); scheduleArt(); });
 $("pRot").addEventListener("input", () => { if (getMode() === "snap") setMode("contain"); scheduleArt(); });
 $("pStretch").addEventListener("input", () => { S.snap = null; if (!$("pStretch").checked) S.keepH = 0; updateInfo(); scheduleArt(); });
+// one-tap surface choice: handy for faces that sit on the build plate and are hard to tap
+function useFace(which) {
+  if (!S.base) return;
+  S.surfSel = which === "bottom" ? { n: [0, 0, -1], c: [0.5, 0.5, 0] } : "top"; $("pOx").value = 0; $("pOy").value = 0;
+  if (V.orb) { V.orb.ph = which === "bottom" ? Math.PI - 0.95 : 0.95; fitView(); }
+  scheduleGeo(true);
+}
+$("topFaceBtn").onclick = () => useFace("top"); $("botFaceBtn").onclick = () => useFace("bottom");
 $("tvBtn").onclick = () => { if (!S.base) return; S.surfSel = "topview"; $("pOx").value = 0; $("pOy").value = 0; scheduleGeo(true); };
 $("pCenter").onclick = () => { $("pOx").value = 0; $("pOy").value = 0; scheduleArt(); };
 $("aUpload").onclick = () => $("aFile").click();
