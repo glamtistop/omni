@@ -1,0 +1,46 @@
+OMNI PART MAKER — SELF-HOSTED / HOME SCREEN VERSION
+====================================================
+
+This folder is the complete app. It needs no Claude account and makes no
+Claude requests. AI Assist is not available in this version; everything else
+(outline from image, STL import, PerfectFit artwork, measuring, exports,
+calibration, projects) works offline after the first load.
+
+FILES
+  index.html              the app
+  manifest.webmanifest    lets iPhone/Mac install it as an app
+  sw.js                   offline cache (only active on https://)
+  icon-*.png, apple-touch-icon.png   app icons
+
+1. PUT IT ONLINE (pick one, all free)
+  A) Netlify Drop (easiest)
+     - On a Mac, go to app.netlify.com/drop
+     - Drag this whole unzipped folder onto the page
+     - You get a link like https://something.netlify.app
+  B) Cloudflare Pages: Create project > Upload assets > drop the folder.
+  C) GitHub Pages: new repository, upload these files, Settings > Pages >
+     Deploy from branch (main, root).
+  It must be served over https:// for offline mode and Home Screen install.
+  Opening index.html directly from Files/Finder works, but without offline
+  caching.
+
+2. ADD TO HOME SCREEN (iPhone)
+  - Open your link in Safari
+  - Tap Share > Add to Home Screen > Add
+  - It opens full-screen with its own icon.
+
+3. ADD TO DOCK (MacBook)
+  - Safari: File > Add to Dock
+  - Chrome: ⋮ menu > Cast, save and share > Install page as app
+
+YOUR DATA
+  - Projects are saved on each device (IndexedDB in that browser).
+    They do NOT sync between iPhone and Mac automatically.
+  - To move a project: Saved > Export project (.omniproject.json),
+    AirDrop/iCloud Drive it, then Import project on the other device.
+  - The Home Screen app and Safari keep separate storage on iPhone.
+  - Artwork never leaves your device. No analytics, no tracking.
+
+UPDATING
+  Replace index.html on your host with the new one. The app picks up the new
+  version the next time it opens online.
