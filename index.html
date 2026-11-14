@@ -197,6 +197,10 @@ input[type="color"] { width: 100%; height: 40px; border: 1px solid var(--line); 
 .checks li::before { content: ""; flex: none; width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; background: var(--good); }
 .checks li.warn::before { background: var(--warn); }
 .checks li.bad::before { background: var(--bad); }
+#dropOv { display: none; position: fixed; inset: 0; z-index: 90; pointer-events: none; background: rgba(10,17,19,.35); border: 3px dashed var(--accent, #c8f26d); border-radius: 14px; align-items: flex-start; justify-content: center; }
+body.dragging #dropOv { display: flex; }
+#dropMsg { margin-top: 18px; padding: 10px 16px; border-radius: 10px; background: var(--panel, #142022); color: var(--text, #fff); font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+.nudge { align-items: flex-end; } .nudge .f.inline { margin: 0; min-width: 110px; flex: 0 0 auto; }
 .checks li.info::before { background: var(--muted, #8aa); }
 .thumb { display: flex; gap: 10px; align-items: center; }
 .thumb canvas { width: 64px; height: 64px; object-fit: contain; border-radius: 10px; background: repeating-conic-gradient(#1b2a2d 0 25%, #132023 0 50%) 0 0/12px 12px; }
@@ -381,6 +385,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <h3>Printable surface</h3>
         <div class="specs" id="sfSpecs"></div>
         <p class="note">Tap any face on the 3D model to measure it and make it the UV print surface.</p>
+        <div class="btns"><button class="btn primary small" id="faceImgBtn">Put an image on this face</button></div>
         <div class="btns">
           <button class="btn small" id="tplSvg">Template .svg (exact size)</button>
           <button class="btn small" id="tplPng">Template .png</button>
@@ -495,6 +500,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
 
       <section class="card c">
         <h3>PerfectFit artwork</h3>
+        <p class="note">Tap any face on the 3D model to move the image there; it resizes to that face. Fine-tune with the arrows, or drag it in Print image (drag a corner to resize).</p>
         <label class="radio"><input type="radio" name="pmode" value="snap"><span><b>Snap to the model's outline</b><span>Finds the size, position and rotation where the image's outline best matches the model's outline. Use it when the STL was made from this image.</span></span></label>
         <label class="radio"><input type="radio" name="pmode" value="cover" checked><span><b>Fit artwork to surface · fill</b><span>Keeps proportions and fills the whole surface. Edges that don't fit are cropped.</span></span></label>
         <label class="radio"><input type="radio" name="pmode" value="contain"><span><b>Fit artwork to surface · show all</b><span>Keeps proportions and fits inside. Leftover space gets the background color.</span></span></label>
@@ -511,7 +517,11 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         </div>
         <label class="check"><input type="checkbox" id="pStretch"> Allow stretching (distorts the artwork; off = proportions always kept)</label>
         <p class="status" id="snapStatus"></p>
-        <div class="btns"><button class="btn small" id="pCenter">Center artwork</button></div>
+        <div class="btns nudge" role="group" aria-label="Move artwork">
+          <button class="btn small" data-nudge="-1,0" aria-label="Move left">←</button><button class="btn small" data-nudge="0,-1" aria-label="Move up">↑</button><button class="btn small" data-nudge="0,1" aria-label="Move down">↓</button><button class="btn small" data-nudge="1,0" aria-label="Move right">→</button>
+          <label class="f inline" for="nudgeStep">Step<select id="nudgeStep"><option value="0.1">0.1 mm</option><option value="0.5" selected>0.5 mm</option><option value="1">1 mm</option><option value="5">5 mm</option></select></label>
+          <button class="btn small" id="pCenter">Center artwork</button>
+        </div>
         <p class="note" id="stretchNote">Width and height always change together, so photos, faces, logos and text are never stretched.</p>
       </section>
 
@@ -1919,6 +1929,15 @@ function updateInfo() {
 }
 function snapStatus() {
   const el = $("snapStatus");
+  if (S.pl && S.pl.mode !== "snap" && S.surf && S.art && !S.art.bound) { // fit report for fill / show all / fixed size
+    const sf = S.surf, p = S.pl, f = v => v.toFixed(1), x0 = p.cx - p.fw / 2, x1 = p.cx + p.fw / 2, y0 = p.cy - p.fh / 2, y1 = p.cy + p.fh / 2;
+    const gaps = [["left", x0], ["right", sf.W - x1], ["top", y0], ["bottom", sf.H - y1]].filter(g => g[1] > 0.05);
+    const trims = [["left", -x0], ["right", x1 - sf.W], ["top", -y0], ["bottom", y1 - sf.H]].filter(g => g[1] > 0.05);
+    const size = `${f(p.w)} × ${f(p.h)} mm on the ${f(sf.W)} × ${f(sf.H)} mm ${sf.label.toLowerCase()}`;
+    if (!gaps.length) { el.className = "status ok"; el.textContent = `Covers the whole face: ${size}` + (trims.length ? `. Trims ${trims.map(g => f(g[1]) + " mm " + g[0]).join(", ")}.` : ", nothing trimmed."); }
+    else { el.className = "status"; el.textContent = `${size}. Uncovered: ${gaps.map(g => f(g[1]) + " mm " + g[0]).join(", ")}` + (p.mode === "contain" ? " (show all keeps the whole image)." : ". Use the arrows or Center to adjust."); }
+    return;
+  }
   if (!S.pl || S.pl.mode !== "snap" || !S.snap) { el.textContent = getMode() === "snap" && !(S.art && S.art.img) ? "Snap needs an image. Upload one above." : ""; el.className = "status"; return; }
   const pc = Math.round(S.snap.score * 100);
   el.className = "status " + (pc >= 96 ? "ok" : pc >= 88 ? "" : "err");
@@ -2963,7 +2982,28 @@ $("upFile").onchange = e => { addRefs(e.target.files); e.target.value = ""; };
 ["dragenter", "dragover"].forEach(ev => $("upZone").addEventListener(ev, e => { e.preventDefault(); $("upZone").classList.add("over"); }));
 ["dragleave", "drop"].forEach(ev => $("upZone").addEventListener(ev, e => { e.preventDefault(); $("upZone").classList.remove("over"); }));
 $("upZone").addEventListener("drop", e => addRefs(e.dataTransfer.files));
-document.addEventListener("dragover", e => e.preventDefault()); document.addEventListener("drop", e => e.preventDefault());
+// Drag and drop anywhere (computer): STL → import, image → onto the face you drop it on, project file → import
+(() => {
+  let depth = 0; const ov = $("dropOv");
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+  const overView = e => { const r = $("view3d").getBoundingClientRect(); return S.base && S.step !== "model" && S.step !== "outline" && r.width > 0 && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; };
+  const label = e => $("dropMsg").textContent = overView(e) ? "Drop on a face to put the image there" : S.base && S.step !== "model" ? "Drop an image for the selected face, or an STL / project file" : "Drop an STL, image or project file";
+  document.addEventListener("dragenter", e => { if (!hasFiles(e)) return; e.preventDefault(); depth++; document.body.classList.add("dragging"); label(e); });
+  document.addEventListener("dragleave", e => { if (!hasFiles(e)) return; if (--depth <= 0) { depth = 0; document.body.classList.remove("dragging"); } });
+  document.addEventListener("dragover", e => { e.preventDefault(); if (hasFiles(e)) { e.dataTransfer.dropEffect = "copy"; label(e); } });
+  document.addEventListener("drop", async e => {
+    e.preventDefault(); depth = 0; document.body.classList.remove("dragging");
+    if (e.target.closest && e.target.closest("#upZone")) return; // the Model step's own drop zone handles it
+    const files = [...(e.dataTransfer ? e.dataTransfer.files : [])]; if (!files.length) return;
+    const stl = files.find(f => /\.stl$/i.test(f.name)), proj = files.find(f => /\.json$/i.test(f.name)), imgs = files.filter(f => /^image\//.test(f.type));
+    if (proj && !stl) { importProjectFile(proj); return; }
+    if (stl) { S.refs = []; if (imgs.length) addRefs(imgs); else renderRefs(); go("model"); await importStlFile(stl); return; }
+    if (!imgs.length) { const t = "That file type isn't supported. Drop an .stl, an image (PNG, JPG, SVG, WebP) or a .omniproject.json file."; showMsg(t); setTimeout(() => { if ($("msg").textContent === t) showMsg(""); }, 4000); return; }
+    if (!S.base || S.step === "model") { addRefs(imgs); go("model"); return; }
+    if (overView(e)) pick({ clientX: e.clientX, clientY: e.clientY });
+    await loadArtFile(imgs[0]);
+  });
+})();
 document.addEventListener("paste", e => { if (S.step !== "model") return; const f = [...(e.clipboardData && e.clipboardData.files || [])]; if (f.length) addRefs(f); });
 
 $("genBtn").onclick = generateDesigns;
@@ -2997,8 +3037,8 @@ document.querySelectorAll("#shapeStarts [data-shape]").forEach(b => b.onclick = 
   startModel({ kind: "shape", shape: sh, radius: sh === "rect" ? 0 : 6, margin: 2, fillHoles: true, ring: "none", holeD: 4, product: "custom" }, dims, sh === "oval" || sh === "heart", "x");
 });
 $("stlBtn").onclick = () => $("stlFile").click();
-$("stlFile").onchange = async e => {
-  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+$("stlFile").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) importStlFile(f); };
+async function importStlFile(f) {
   try {
     const st = parseSTL(await f.arrayBuffer()); st.name = f.name.replace(/\.[^.]+$/, ""); S.stl = st; S.artImg = null; S.design = null; $("ltText").value = ""; S.snap = null;
     if (S.refs.length) { const img = await fileToImage(S.refs[0].file), src = toCanvas(img, 2400); S.artImg = prepareArt(src, "auto", 18, null, S.refs[0].file.name.replace(/\.[^.]+$/, ""), img.naturalWidth); setMode("snap"); setFilament(S.filament); } else setMode("contain");
@@ -3006,7 +3046,7 @@ $("stlFile").onchange = async e => {
     startModel({ kind: "stl", product: "custom" }, { x: +st.nat.x.toFixed(2), y: +st.nat.y.toFixed(2), z: +st.nat.z.toFixed(2) }, true, "x");
     S.surfSel = "auto";
   } catch (err) { $("cStatus").className = "status err"; $("cStatus").textContent = err.message; }
-};
+}
 
 // dimensions
 function setDim(k, v) {
@@ -3087,11 +3127,18 @@ $("topFaceBtn").onclick = () => useFace("top"); $("botFaceBtn").onclick = () => 
 $("tvBtn").onclick = () => { if (!S.base) return; S.surfSel = "topview"; $("pOx").value = 0; $("pOy").value = 0; scheduleGeo(true); };
 $("pCenter").onclick = () => { $("pOx").value = 0; $("pOy").value = 0; scheduleArt(); };
 $("aUpload").onclick = () => $("aFile").click();
-$("aFile").onchange = async e => {
-  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+$("faceImgBtn").onclick = () => { if (!S.base) return; S.faceImg = true; $("aFile").click(); };
+document.querySelectorAll("[data-nudge]").forEach(b => b.onclick = () => {
+  const [dx, dy] = b.dataset.nudge.split(",").map(Number), st = +$("nudgeStep").value || 0.5;
+  $("pOx").value = +(mm2u(u2mm(+$("pOx").value || 0) + dx * st)).toFixed(S.units === "in" ? 3 : 2);
+  $("pOy").value = +(mm2u(u2mm(+$("pOy").value || 0) + dy * st)).toFixed(S.units === "in" ? 3 : 2);
+  dropSnapRot(); updateInfo(); scheduleArt();
+});
+$("aFile").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) loadArtFile(f); };
+async function loadArtFile(f) {
   try { const img = await fileToImage(f), src = toCanvas(img, 2400); S.artImg = prepareArt(src, "auto", 18, null, f.name.replace(/\.[^.]+$/, ""), img.naturalWidth); S.design = null; S.snap = null; if ($("ltPos").value === "design") $("ltPos").value = "bottom"; if (S.base && S.base.kind === "stl") setMode("snap"); else if (S.base && S.base.kind !== "cutout") setMode("contain"); openOutline("design"); }
   catch (err) { $("aStatus").className = "status err"; $("aStatus").textContent = err.message; }
-};
+}
 $("aClear").onclick = () => { S.artImg = null; S.design = null; scheduleGeo(true); };
 $("aEditOutline").onclick = () => { if (S.artImg) openOutline("design"); else { $("aStatus").textContent = "Upload an image first."; } };
 $("mEditOutline").onclick = () => { if (S.artImg) openOutline("measure"); };
@@ -3140,5 +3187,6 @@ setAI(S.aiOn); calLoad(); calRender();
 if (!init3d()) showMsg("The 3D viewer couldn't load. Downloads still work.");
 go("model"); netUpdate(); offerRestore();
 </script>
+<div id="dropOv" aria-hidden="true"><div id="dropMsg">Drop an STL, image or project file</div></div>
 </body>
 </html>
