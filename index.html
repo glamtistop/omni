@@ -1390,7 +1390,7 @@ function computePlacement(sf, art, o) {
   let mode = o.mode, rot = o.rot, ky = 1, k, cx = sf.W / 2, cy = sf.H / 2;
   if (mode === "snap") {
     const key = [sf.label, sf.W.toFixed(2), sf.H.toFixed(2), sf.loops.length, o.stretch].join("|");
-    if (!S.snap || S.snap.art !== S.artImg || S.snap.key !== key) { const r = art.img ? autoSnap() : null; S.snap = r ? { ...r.p, score: r.s, art: S.artImg, key } : null; if (S.snap) $("pRot").value = S.snap.rot; }
+    if (!S.snap || S.snap.art !== S.artImg || S.snap.key !== key) { const r = art.img ? autoSnap() : null; S.snap = r ? { ...r.p, score: r.s, art: S.artImg, key } : null; if (S.snap) { $("pRot").value = S.snap.rot; S.snapRot = true; } }
     if (S.snap) { k = S.snap.k; ky = S.snap.ky; cx = S.snap.cx; cy = S.snap.cy; rot = S.snap.rot; } else mode = "contain";
   }
   const sw = rot % 180 !== 0;
@@ -2566,7 +2566,9 @@ for (const [id, t] of [["oToolRegion", "region"], ["oToolAdd", "add"], ["oToolEr
 for (const id of ["oBg", "oTol", "oSmooth", "oHoles", "oSpeck"]) $(id).addEventListener("input", oeSetting);
 $("oUndo").onclick = () => { const A = S.artImg; if (!A || !A.undo.length) return; A.edits = A.undo.pop(); rebuildMask(A); S.snap = null; drawOutline(); };
 $("oReset").onclick = () => { const A = S.artImg; if (!A) return; oePush(A); A.edits.fill(0); rebuildMask(A); S.snap = null; drawOutline(); };
-$("oDone").onclick = () => { if (!S.artImg || S.artImg.empty) return; S.snap = null; markDone("model"); go(S.outlineReturn || "measure"); scheduleGeo(true); };
+$("oDone").onclick = () => { if (!S.artImg || S.artImg.empty) return; S.snap = null;
+  // a whole rectangular image (photo) has no outline to snap to: fill the surface upright instead
+  if (S.artImg.bgMode === "keep" && getMode() === "snap") { setMode("cover"); $("pRot").value = 0; S.snapRot = false; } markDone("model"); go(S.outlineReturn || "measure"); scheduleGeo(true); };
 
 /* =========================================================
    regression self-tests (run in the browser, no AI)
@@ -3055,9 +3057,10 @@ for (const id of ["mOutline", "mRing", "mMargin", "mRadius", "mHole", "mFill", "
 for (const id of ["ltText", "ltFont"]) $(id).addEventListener("input", () => { if (S.base && S.base.kind === "cutout" && !S.artImg) scheduleGeo(); else scheduleArt(); });
 for (const id of ["ltPos", "ltFg", "ltOutline", "ltOutlineW", "bgFill", "bg1", "bg2", "grad", "border", "borderW", "pInset", "pOx", "pOy", "bleed"]) $(id).addEventListener("input", () => { updateInfo(); scheduleArt(); });
 for (const id of ["fStyle", "fRaise", "fLevels", "fStep", "fFrom"]) $(id).addEventListener("input", () => { updateInfo(); scheduleGeo(); });
-document.querySelectorAll('input[name="pmode"]').forEach(r => r.addEventListener("input", () => { if (getMode() === "keep" && S.pl) S.keepW = S.pl.w; scheduleArt(); }));
-$("pW").addEventListener("input", e => { const v = u2mm(parseFloat(e.target.value)); if (!(v > 0)) return; S.keepW = v; setMode("keep"); scheduleArt(); });
-$("pRot").addEventListener("input", () => { if (getMode() === "snap") setMode("contain"); scheduleArt(); });
+function dropSnapRot() { if (S.snapRot && getMode() !== "snap") { $("pRot").value = 0; S.snapRot = false; } }
+document.querySelectorAll('input[name="pmode"]').forEach(r => r.addEventListener("input", () => { dropSnapRot(); if (getMode() === "keep" && S.pl) S.keepW = S.pl.w; scheduleArt(); }));
+$("pW").addEventListener("input", e => { const v = u2mm(parseFloat(e.target.value)); if (!(v > 0)) return; S.keepW = v; setMode("keep"); dropSnapRot(); scheduleArt(); });
+$("pRot").addEventListener("input", () => { S.snapRot = false; if (getMode() === "snap") setMode("contain"); scheduleArt(); });
 $("pStretch").addEventListener("input", () => { S.snap = null; if (!$("pStretch").checked) S.keepH = 0; updateInfo(); scheduleArt(); });
 // one-tap surface choice: handy for faces that sit on the build plate and are hard to tap
 function useFace(which) {
