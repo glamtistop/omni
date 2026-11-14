@@ -3052,7 +3052,21 @@ function lipChanged() {
   specFromControls(); updateInfo(); scheduleGeo();
 }
 for (const id of ["mLip", "mLipH", "mLipW"]) $(id).addEventListener("input", lipChanged);
-for (const id of ["mOutline", "mRing", "mMargin", "mRadius", "mHole", "mFill", "mRingDx", "mRingDy"]) $(id).addEventListener("input", () => { if (!S.spec || S.spec.kind === "stl") return; const wasCut = S.spec.kind === "cutout"; specFromControls(); if (wasCut !== (S.spec.kind === "cutout")) setLock(S.spec.kind === "cutout"); updateInfo(); scheduleGeo(); });
+// Adding, moving or resizing the key ring tab on a plain shape keeps the shape itself the same size:
+// the tab is added on top of X/Y (which stay the overall size), so a 50 mm circle stays a 50 mm circle.
+async function tabGrowth(sp, W, H) { if (sp.ring === "none") return [0, 0]; const r = await bodyRaster(sp, W, H); return [r.bw - W, r.bh - H]; }
+async function keepBodySize(old, sp) {
+  const d = S.dims, g0 = await tabGrowth(old, d.x, d.y), bw = Math.max(2, d.x - g0[0]), bh = Math.max(2, d.y - g0[1]), g1 = await tabGrowth(sp, bw, bh);
+  const nx = +(bw + g1[0]).toFixed(2), ny = +(bh + g1[1]).toFixed(2);
+  if (Math.abs(nx - d.x) < 0.01 && Math.abs(ny - d.y) < 0.01) return;
+  if (S.dims0) { S.dims0.x = +(S.dims0.x + nx - d.x).toFixed(2); S.dims0.y = +(S.dims0.y + ny - d.y).toFixed(2); }
+  d.x = nx; d.y = ny; writeDims();
+}
+for (const id of ["mOutline", "mRing", "mMargin", "mRadius", "mHole", "mFill", "mRingDx", "mRingDy"]) $(id).addEventListener("input", async () => {
+  if (!S.spec || S.spec.kind === "stl") return; const wasCut = S.spec.kind === "cutout", old = { ...S.spec }; specFromControls();
+  if (wasCut !== (S.spec.kind === "cutout")) setLock(S.spec.kind === "cutout");
+  if (["mRing", "mHole", "mRingDx", "mRingDy"].includes(id) && old.kind === "shape" && S.spec.kind === "shape") { try { await keepBodySize(old, S.spec); } catch (e) { console.error(e); } }
+  updateInfo(); scheduleGeo(); });
 // design controls
 for (const id of ["ltText", "ltFont"]) $(id).addEventListener("input", () => { if (S.base && S.base.kind === "cutout" && !S.artImg) scheduleGeo(); else scheduleArt(); });
 for (const id of ["ltPos", "ltFg", "ltOutline", "ltOutlineW", "bgFill", "bg1", "bg2", "grad", "border", "borderW", "pInset", "pOx", "pOy", "bleed"]) $(id).addEventListener("input", () => { updateInfo(); scheduleArt(); });
