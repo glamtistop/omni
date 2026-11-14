@@ -702,7 +702,7 @@ const PRODUCTS = {
   keychain:  { label: "Keychain",  kind: "cutout", x: 55, y: 35, z: 3, ring: "top", margin: 2, driver: "x" },
   bagtag:    { label: "Bag tag",   kind: "cutout", x: 55, y: 76, z: 3.5, ring: "top", margin: 1.5, driver: "y" },
   nameplate: { label: "Nameplate", kind: "shape", shape: "rounded", x: 120, y: 35, z: 4, ring: "none", radius: 5 },
-  coaster:   { label: "Coaster",   kind: "shape", shape: "oval", x: 99.98, y: 99.99, z: 6, ring: "none" },
+  coaster:   { label: "Coaster",   kind: "shape", shape: "oval", x: 99.98, y: 99.99, z: 6, ring: "none", lip: true },
   ornament:  { label: "Ornament",  kind: "shape", shape: "oval", x: 75, y: 75, z: 3, ring: "top" },
   magnet:    { label: "Magnet",    kind: "shape", shape: "rounded", x: 60, y: 40, z: 3, ring: "none", radius: 4 },
   sign:      { label: "Sign / plaque", kind: "shape", shape: "rounded", x: 150, y: 100, z: 5, ring: "none", radius: 6 }
@@ -1934,7 +1934,7 @@ function autoName() { const L = $("ltText").value.split("\n")[0]; const base = (
    ========================================================= */
 function specFromProduct(key, overrides) {
   const p = PRODUCTS[key] || PRODUCTS.keychain;
-  return Object.assign({ kind: p.kind, shape: p.shape || "rounded", radius: p.radius || 4, margin: p.margin || 2, fillHoles: true, ring: p.ring || "none", holeD: 4, ringDx: 0, ringDy: 0, lip: false, lipH: 2, lipW: 3, product: key }, overrides || {});
+  return Object.assign({ kind: p.kind, shape: p.shape || "rounded", radius: p.radius || 4, margin: p.margin || 2, fillHoles: true, ring: p.ring || "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!p.lip, lipH: 2, lipW: 3, product: key }, overrides || {});
 }
 function syncModelControls() {
   const sp = S.spec; if (!sp || sp.kind === "stl") return;
