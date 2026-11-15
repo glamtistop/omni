@@ -200,6 +200,13 @@ input[type="color"] { width: 100%; height: 40px; border: 1px solid var(--line); 
 #dropOv { display: none; position: fixed; inset: 0; z-index: 90; pointer-events: none; background: rgba(10,17,19,.35); border: 3px dashed var(--accent, #c8f26d); border-radius: 14px; align-items: flex-start; justify-content: center; }
 body.dragging #dropOv { display: flex; }
 #dropMsg { margin-top: 18px; padding: 10px 16px; border-radius: 10px; background: var(--panel, #142022); color: var(--text, #fff); font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+#vtools { position: absolute; top: 8px; right: 8px; z-index: 6; max-width: min(360px, calc(100% - 16px)); display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: rgba(13,22,24,.92); border: 1px solid var(--line); font-size: 13px; }
+#vtools.hidden { display: none; } #vtools .vrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } #vtools button { padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; min-height: 32px; }
+#vtools button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); } #vtools input[type=range] { flex: 1; min-width: 120px; } #vtools .check { margin: 0; }
+@media (pointer: coarse) { #vtools button { min-height: 44px; min-width: 44px; } }
+#measLbl { position: absolute; transform: translate(-50%, -130%); pointer-events: none; background: #7fd0ff; color: #08151a; border-color: #7fd0ff; z-index: 5; white-space: nowrap; }
+#bPreview { width: 100%; height: auto; border-radius: 10px; background: #0d1618; border: 1px solid var(--line); }
+#prOut { margin-top: 6px; } #prOut .big { font-size: 20px; color: var(--accent); }
 .nudge { align-items: flex-end; }
 .describe { display: grid; gap: 8px; } .describe textarea { width: 100%; } #descParse b { color: var(--accent); font-weight: 600; } .nudge .f.inline { margin: 0; min-width: 110px; flex: 0 0 auto; }
 .checks li.info::before { background: var(--muted, #8aa); }
@@ -318,6 +325,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <button id="uIn" aria-pressed="false">in</button>
         </div>
         <span class="hint" id="vHint">Drag to turn · tap a face to select it</span>
+        <button class="iconbtn" id="vTools" title="Views, section cut, X-ray and measuring" aria-pressed="false">Inspect</button>
         <button class="iconbtn" id="vFit" title="Fit model to view (F)">Fit</button>
         <button class="iconbtn" id="vFs" title="Full screen preview" aria-pressed="false">⤢</button>
         <button class="iconbtn" id="vPanel" title="Hide or show the settings panel" aria-pressed="false">Panel</button>
@@ -327,6 +335,15 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <canvas id="view2d" class="hidden" aria-label="Print image preview"></canvas>
         <canvas id="viewOutline" class="hidden" aria-label="Outline editor"></canvas>
         <div id="labels"></div>
+        <div id="vtools" class="hidden" role="group" aria-label="Inspect the model">
+          <div class="vrow vviews">
+            <button data-view="iso" title="Angled view (0)">3D</button><button data-view="top" title="Top (5)">Top</button><button data-view="front" title="Front (1)">Front</button><button data-view="back" title="Back (2)">Back</button><button data-view="left" title="Left (3)">Left</button><button data-view="right" title="Right (4)">Right</button><button data-view="bottom" title="Bottom (6)">Bottom</button>
+          </div>
+          <label class="vrow" for="vCut" title="Slice the model at a height to see inside (red = solid plastic)">Section cut <input type="range" id="vCut" min="0" max="1000" value="1000"><span id="vCutLbl">off</span></label>
+          <div class="vrow"><label class="check"><input type="checkbox" id="vXray"> X-ray</label><label class="check"><input type="checkbox" id="vEdges"> Edges</label><button id="vMeasure" aria-pressed="false">Measure</button><button id="vMeasClr">Clear</button></div>
+          <div id="vMeasOut" class="vrow">Measure: tap two points on the model.</div>
+        </div>
+        <div id="measLbl" class="dl hidden"></div>
         <div class="badge hidden" id="sfBadge"></div>
         <div class="msg" id="msg"></div>
         <div class="busy" id="busy">updating…</div>
@@ -562,6 +579,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <label class="f" for="pInset">Inner margin<span class="unit" data-unit="mm" id="pInu"><input type="number" id="pInset" min="0" step="0.5" value="2"></span></label>
           <label class="f" for="pRot">Rotate artwork<select id="pRot"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
         </div>
+        <label class="check" id="pTabRow"><input type="checkbox" id="pTab"> Cover the key ring tab too (the image spans the whole part; the hole stays clear)</label>
         <label class="check"><input type="checkbox" id="pStretch"> Allow stretching (distorts the artwork; off = proportions always kept)</label>
         <p class="status" id="snapStatus"></p>
         <div class="btns nudge" role="group" aria-label="Move artwork">
@@ -646,12 +664,68 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
       <section class="card c">
         <h3>② Omni · print image</h3>
         <p class="note" id="xImgNote"></p>
+        <p class="status ok" id="xToolNote"></p>
         <div class="btns">
           <button class="btn primary" id="xPng">Print image .png</button>
           <button class="btn" id="xSvg">Print image .svg (exact mm)</button>
           <button class="btn small" id="xWhite">White ink layer .png</button>
           <button class="btn small" id="xTpl">Surface template .svg</button>
         </div>
+      </section>
+      <section class="card c" id="batchCard">
+        <h3>③ Batch Production Studio + UV jig</h3>
+        <p class="note">Make 25–100+ of this part at once. Leave the list empty for identical items, or put one name per line to personalize the lettering on each.</p>
+        <div class="row">
+          <label class="f" for="bQty">Quantity<input type="number" id="bQty" min="1" max="500" step="1" value="25" inputmode="numeric"></label>
+          <label class="f" for="bBed">Omni bed<select id="bBed"><option value="std">Standard 330 × 122 mm</option><option value="large">Large 330 × 420 mm</option></select></label>
+          <label class="f" for="bGap">Gap between parts<span class="unit" data-unit="mm"><input type="number" id="bGap" min="2" max="30" step="0.5" value="4"></span></label>
+        </div>
+        <label class="f" for="bNames">Names (one per line, optional)<textarea id="bNames" rows="3" placeholder="Ava&#10;Liam&#10;Mia"></textarea></label>
+        <div class="row">
+          <label class="f" for="bClear">Jig pocket clearance<span class="unit" data-unit="mm"><input type="number" id="bClear" min="0.1" max="1.5" step="0.05" value="0.3"></span></label>
+          <label class="f" for="bDepth">Pocket depth<span class="unit" data-unit="mm"><input type="number" id="bDepth" min="0" max="10" step="0.2" value="" placeholder="auto"></span></label>
+          <label class="f" for="bJigW">Jig max width<span class="unit" data-unit="mm"><input type="number" id="bJigW" min="0" max="400" step="1" value="" placeholder="auto"></span></label>
+        </div>
+        <p class="status" id="bSummary"></p>
+        <canvas id="bPreview" class="hidden" aria-label="Jig and sheet layout preview"></canvas>
+        <label class="check"><input type="checkbox" id="bSingles"> Also include one print image per item</label>
+        <div class="btns">
+          <button class="btn primary" id="bZip">Download batch (.zip)</button>
+          <button class="btn" id="bJig">Jig STL only</button>
+        </div>
+        <p class="status" id="bStatus"></p>
+        <p class="note">Print the jig once on the Bambu and keep it. Put it on the Omni bed, drop a part into each pocket, import a sheet image at exactly the jig size (rotation 0°) and line it up with the jig using Pixel-Scan. Every pocket gets its own item. The ◤ notch marks the jig's top-left corner.</p>
+      </section>
+      <section class="card c" id="priceCard">
+        <h3>④ Instant production pricing</h3>
+        <div class="row">
+          <label class="f" for="prFil">Filament $/kg<input type="number" id="prFil" min="0" step="0.5" value="20"></label>
+          <label class="f" for="prDens">Filament density g/cm³<input type="number" id="prDens" min="0.5" max="3" step="0.01" value="1.24"></label>
+          <label class="f" for="prFill">Solid fraction %<input type="number" id="prFill" min="5" max="100" step="1" value="70" title="How much of the part ends up solid plastic (walls, top/bottom layers, infill). Thin flat parts are usually 60–85%."></label>
+        </div>
+        <div class="row">
+          <label class="f" for="prGrams">Grams per item (from Bambu Studio)<input type="number" id="prGrams" min="0" step="0.1" placeholder="auto estimate"></label>
+          <label class="f" for="prMin">Print minutes per item (Bambu Studio)<input type="number" id="prMin" min="0" step="1" placeholder="auto estimate"></label>
+          <label class="f" for="prRate">Bambu $/hour<input type="number" id="prRate" min="0" step="0.05" value="0.60"></label>
+        </div>
+        <div class="row">
+          <label class="f" for="prInk">UV ink $ per cm² printed<input type="number" id="prInk" min="0" step="0.005" value="0.02"></label>
+          <label class="f" for="prOmniMin">Omni minutes per sheet<input type="number" id="prOmniMin" min="0" step="1" value="12"></label>
+          <label class="f" for="prOmniRate">Omni $/hour<input type="number" id="prOmniRate" min="0" step="0.1" value="2.00"></label>
+        </div>
+        <div class="row">
+          <label class="f" for="prLabor">Labor $/hour<input type="number" id="prLabor" min="0" step="0.5" value="20"></label>
+          <label class="f" for="prLabMin">Hands-on minutes per item<input type="number" id="prLabMin" min="0" step="0.5" value="2"></label>
+          <label class="f" for="prSetup">Setup minutes per order<input type="number" id="prSetup" min="0" step="1" value="20"></label>
+        </div>
+        <div class="row">
+          <label class="f" for="prExtra">Extras $ per item (NFC chip, ring, bag)<input type="number" id="prExtra" min="0" step="0.05" value="0"></label>
+          <label class="f" for="prWaste">Waste / reprints %<input type="number" id="prWaste" min="0" max="100" step="1" value="8"></label>
+          <label class="f" for="prMargin">Target profit margin %<input type="number" id="prMargin" min="0" max="95" step="1" value="50"></label>
+        </div>
+        <div id="prOut" class="specs"></div>
+        <div class="btns"><button class="btn small" id="prCopy">Copy quote text</button><button class="btn small" id="prReset">Reset to defaults</button></div>
+        <p class="status" id="prStatus"></p>
       </section>
       <section class="card c">
         <h3>Export report</h3>
@@ -1517,7 +1591,7 @@ function getArt() {
 function getMode() { return document.querySelector('input[name="pmode"]:checked').value; }
 function setMode(m) { document.querySelector(`input[name="pmode"][value="${m}"]`).checked = true; }
 function placementOpts() {
-  const onTop = S.base && S.base.kind === "shape" && S.surf && S.surf.isTop && S.surfSel === "top";
+  const onTop = S.base && S.base.kind === "shape" && S.surf && S.surf.isTop && S.surfSel === "top" && !(S.spec.ring !== "none" && $("pTab").checked);
   return { mode: getMode(), rot: +$("pRot").value || 0, stretch: $("pStretch").checked, ox: u2mm(+$("pOx").value || 0), oy: u2mm(+$("pOy").value || 0), inset: Math.max(0, u2mm(+$("pInset").value || 0)), inner: onTop ? S.base.inner : null, body: onTop ? S.base.body : null, keepW: S.keepW, keepH: S.keepH };
 }
 function containBox(sf, o) {
@@ -1815,6 +1889,7 @@ function init3d() {
   return true;
 }
 function pick(e) {
+  if (V.measuring && V.pickMesh) { measurePick(e); return; }
   if (!V.pickMesh || S.step === "model") return;
   const r = $("view3d").getBoundingClientRect(), m = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   const rc = new THREE.Raycaster(); rc.setFromCamera(m, V.cam);
@@ -1841,7 +1916,7 @@ function render3d() {
   o.target.copy(V.base).add(V.pan);
   V.cam.position.set(o.target.x + o.dist * Math.sin(o.ph) * Math.cos(o.th), o.target.y + o.dist * Math.sin(o.ph) * Math.sin(o.th), o.target.z + o.dist * Math.cos(o.ph));
   V.cam.lookAt(o.target); V.r.render(V.scene, V.cam);
-  placeLabels();
+  placeLabels(); placeMeasLabel();
 }
 function disposeGroup(g) { while (g.children.length) { const c = g.children.pop(); if (c.children && c.children.length) disposeGroup(c); if (c.geometry) c.geometry.dispose(); if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } } }
 function update3d() {
@@ -1891,8 +1966,9 @@ function update3d() {
     const ln = new THREE.LineSegments(g, new THREE.LineDashedMaterial({ color: 0x7fd0ff, dashSize: 1.2, gapSize: 0.8, depthTest: false, transparent: true, opacity: 0.9 })); ln.computeLineDistances(); ln.renderOrder = 5; V.root.add(ln);
   }
   if (S.stand && S.stand.tris) {
-    const bb0 = triBBox(S.base.tris), sm = new THREE.Mesh(mk(S.stand.tris.slice()), V.sideMat); sm.position.set(bb0[3] + 12, bb0[1], 0); V.root.add(sm);
-  }
+    const bb0 = triBBox(S.base.tris), sm = new THREE.Mesh(mk(S.stand.tris.slice()), V.sideMat.clone()); sm.position.set(bb0[3] + 12, bb0[1], 0); V.root.add(sm); V.standMesh = sm;
+  } else V.standMesh = null;
+  if ($("vEdges").checked) { const eg = new THREE.EdgesGeometry(mk(all.slice()), 25); V.root.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x0c1416 }))); }
   V.pickMesh = new THREE.Mesh(mk(all.slice()), new THREE.MeshBasicMaterial()); V.pickMesh.matrixAutoUpdate = false; V.pickMesh.matrix.copy(M);
   // plate
   const P = PRINTERS[$("printer").value];
@@ -1911,6 +1987,7 @@ function update3d() {
   const sz = Math.max(vb[3] - vb[0], vb[4] - vb[1], (vb[5] - vb[2]) * 2);
   V.base.set((vb[0] + vb[3]) / 2, (vb[1] + vb[4]) / 2, (vb[2] + vb[5]) / 2);
   if (!V.fitFor || Math.abs(V.fitFor - sz) > sz * 0.3) { V.orb.dist = sz * 1.15 / (0.63 * Math.min(1, V.cam.aspect || 1)) + 15; V.fitFor = sz; }
+  applyInspect(); if (V.meas && V.meas.length) drawMeasure();
   render3d();
 }
 function placeLabels() {
@@ -1926,6 +2003,237 @@ function placeLabels() {
   box.innerHTML = html;
 }
 
+
+
+/* =========================================================
+   Batch Production Studio + printable UV alignment jig
+   ========================================================= */
+function footprintPolys(T, clear, mirror) { // top-view outline of the part grown by `clear`, local mm (x right, y up, from the part's bbox min)
+  const b = triBBox(T), W = b[3] - b[0], H = b[4] - b[1], R = Math.min(10, 1200 / Math.max(W, H)), pad = clear + 2;
+  const gw = Math.ceil((W + 2 * pad) * R), gh = Math.ceil((H + 2 * pad) * R), c = document.createElement("canvas"); c.width = gw; c.height = gh;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.fillStyle = "#fff"; g.beginPath(); let n = 0;
+  for (let o = 0; o < T.length; o += 9) {
+    const ax = (T[o] - b[0] + pad) * R, ay = (b[4] - T[o + 1] + pad) * R, bx = (T[o + 3] - b[0] + pad) * R, by = (b[4] - T[o + 4] + pad) * R, cx = (T[o + 6] - b[0] + pad) * R, cy = (b[4] - T[o + 7] + pad) * R;
+    const cr = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax); if (Math.abs(cr) < 1e-9) continue;
+    g.moveTo(ax, ay); if (cr > 0) { g.lineTo(bx, by); g.lineTo(cx, cy); } else { g.lineTo(cx, cy); g.lineTo(bx, by); } g.closePath(); if (++n === 256) { g.fill("nonzero"); g.beginPath(); n = 0; }
+  }
+  g.fill("nonzero");
+  const F = dilate(alphaField(g, gw, gh), gw, gh, clear * R + 0.5), polys = fieldToPolys(F, gw, gh, R);
+  const cv = l => { const o = new Array(l.length); for (let i = 0; i < l.length; i += 2) { const lx = l[i] - pad, ly = H + pad - l[i + 1]; o[i] = mirror ? W - lx : lx; o[i + 1] = ly; } return o; };
+  return polys.map(p => ({ outer: cv(p.outer), holes: p.holes.map(cv) }));
+}
+const movePolys = (polys, dx, dy) => polys.map(p => { const mv = l => { const o = l.slice(); for (let i = 0; i < o.length; i += 2) { o[i] += dx; o[i + 1] += dy; } return o; }; return { outer: mv(p.outer), holes: p.holes.map(mv) }; });
+function batchNames() { return $("bNames").value.split("\n").map(x => x.trim()).filter(Boolean); }
+function batchPlan() {
+  if (!S.base || !S.surf) return { err: "Make a part first." };
+  const sf = S.surf, T = allTris(), b = triBBox(T), bw = b[3] - b[0], bh = b[4] - b[1], bz = b[5] - b[2];
+  const orient = sf.isProj || sf.n[2] > 0.99 ? "top" : sf.n[2] < -0.99 ? "bottom" : null;
+  const names = batchNames(), qty = names.length || clamp(Math.round(+$("bQty").value || 1), 1, 500);
+  const clear = clamp(+$("bClear").value || 0.3, 0.1, 1.5), gap = clamp(+$("bGap").value || 4, 2, 30), edge = 10;
+  const bed = OMNI_BED[$("bBed").value] || OMNI_BED.std, P = PRINTERS[$("printer").value];
+  let maxW = Math.min(bed[0], P[0]) - 4, maxH = Math.min(bed[1], P[1]) - 4; if (+$("bJigW").value > 0) maxW = Math.min(maxW, +$("bJigW").value);
+  const fw = bw + 2 * clear, fh = bh + 2 * clear, cols = Math.floor((maxW - 2 * edge + gap) / (fw + gap)), rowsMax = Math.floor((maxH - 2 * edge + gap) / (fh + gap));
+  const pm = 5, pg = 5, pc = Math.floor((P[0] - 2 * pm + pg) / (bw + pg)), prr = Math.floor((P[1] - 2 * pm + pg) / (bh + pg)), perPlate = Math.max(0, pc * prr);
+  const plan = { sf, T, b, bw, bh, bz, orient, names, qty, clear, gap, edge, bed, P, pm, pg, pc, prr, perPlate, plates: perPlate ? Math.ceil(qty / perPlate) : 0 };
+  if (!perPlate) plan.err = `One part (${n1(bw)} × ${n1(bh)} mm) doesn't fit the ${P[3]} plate.`;
+  if (!orient) { plan.jigErr = `Jigs hold parts printed on their top or bottom face. The ${sf.label.toLowerCase()} is selected, so use single print images for this part.`; return plan; }
+  if (cols < 1 || rowsMax < 1) { plan.jigErr = `The part (${n1(fw)} × ${n1(fh)} mm with clearance) is too big for a jig on the ${bed === OMNI_BED.std ? "standard" : "large"} Omni bed. Try the large bed.`; return plan; }
+  const rows = Math.min(rowsMax, Math.ceil(qty / cols)), cells = cols * rows, jigW = 2 * edge + cols * fw + (cols - 1) * gap, jigH = 2 * edge + rows * fh + (rows - 1) * gap;
+  const pd = +$("bDepth").value > 0 ? clamp(+$("bDepth").value, 0.4, Math.max(0.4, bz)) : clamp(bz * 0.5, 1, 3);
+  Object.assign(plan, { cols, rows, cells, jigW, jigH, fw, fh, pd, jigT: +(pd + 1.6).toFixed(2), sheets: Math.ceil(qty / cells) });
+  return plan;
+}
+function cellOrigin(pl, i) { const r = Math.floor(i / pl.cols), c = i % pl.cols, left = pl.edge + c * (pl.fw + pl.gap), top = pl.jigH - pl.edge - r * (pl.fh + pl.gap); return { r, c, ox: left + pl.clear, oy: top - pl.fh + pl.clear }; }
+// where the item's print image (surface origin) lands on the sheet, in mm from the jig's top-left corner
+function itemOnSheet(pl, i) {
+  const { ox, oy } = cellOrigin(pl, i), sf = pl.sf, b = pl.b;
+  return pl.orient === "top" ? { x: ox + sf.u0 - b[0], y: pl.jigH - oy + sf.v0 + b[1] } : { x: ox + b[3] + sf.u0, y: pl.jigH - oy + sf.v0 + b[1] };
+}
+function buildJig(pl) {
+  const foot = footprintPolys(pl.T, pl.clear, pl.orient === "bottom"), pockets = [];
+  for (let i = 0; i < pl.cells; i++) { const { ox, oy } = cellOrigin(pl, i); pockets.push(...movePolys(foot, ox, oy)); }
+  const J = pl.jigH; pockets.push({ outer: [3, J - 3, 3, J - 9, 9, J - 3], holes: [] }); // ◤ top-left corner marker
+  const out = []; pushLipped(out, [{ outer: [0, 0, pl.jigW, 0, pl.jigW, J, 0, J], holes: [] }], pockets, +(pl.jigT - pl.pd).toFixed(3), pl.jigT);
+  return { tris: new Float32Array(out), foot };
+}
+function batchSummary() {
+  const el = $("bSummary"); if (!S.base || !S.surf) { el.textContent = ""; return; }
+  const pl = batchPlan(); S.batchPlan = pl; const bits = [];
+  if (pl.err) { el.className = "status err"; el.textContent = pl.err; drawBatchPreview(null); return; }
+  bits.push(`<b>${pl.qty}</b> item${pl.qty === 1 ? "" : "s"}${pl.names.length ? " (personalized)" : ""}`);
+  bits.push(`Bambu ${pl.P[3]}: ${pl.perPlate} per plate → <b>${pl.plates}</b> plate${pl.plates === 1 ? "" : "s"}`);
+  if (pl.jigErr) bits.push(esc(pl.jigErr));
+  else bits.push(`Jig ${n1(pl.jigW)} × ${n1(pl.jigH)} × ${pl.jigT} mm with <b>${pl.cells}</b> pockets (${pl.cols} × ${pl.rows}, ${n1(pl.pd)} mm deep) → <b>${pl.sheets}</b> Omni run${pl.sheets === 1 ? "" : "s"}` + (pl.qty % pl.cells ? ` (last run ${pl.qty % pl.cells})` : "") + (pl.names.length ? "" : `; identical items, so ${pl.qty % pl.cells && pl.sheets > 1 ? "2 sheet images are" : "1 sheet image is"} reused`));
+  el.className = pl.jigErr ? "status" : "status ok"; el.innerHTML = bits.join(" · ");
+  drawBatchPreview(pl);
+}
+function drawBatchPreview(pl) {
+  const c = $("bPreview"); if (!pl || pl.jigErr || pl.err) { c.classList.add("hidden"); return; }
+  c.classList.remove("hidden"); const W = 640, k = (W - 20) / pl.jigW, H = Math.round(pl.jigH * k + 20); c.width = W; c.height = H;
+  const g = c.getContext("2d"); g.clearRect(0, 0, W, H); g.save(); g.translate(10, 10);
+  g.fillStyle = "#2a3d40"; g.fillRect(0, 0, pl.jigW * k, pl.jigH * k);
+  const foot = S.batchFoot && S.batchFoot.key === batchKey(pl) ? S.batchFoot.foot : (S.batchFoot = { key: batchKey(pl), foot: footprintPolys(pl.T, pl.clear, pl.orient === "bottom") }).foot;
+  for (let i = 0; i < pl.cells; i++) {
+    const { ox, oy } = cellOrigin(pl, i); g.beginPath();
+    for (const p of foot) for (const l of [p.outer, ...p.holes]) { for (let j = 0; j < l.length; j += 2) { const X = (l[j] + ox) * k, Y = (pl.jigH - (l[j + 1] + oy)) * k; j ? g.lineTo(X, Y) : g.moveTo(X, Y); } g.closePath(); }
+    g.fillStyle = i < pl.qty ? "#0d1618" : "#1a2a2d"; g.fill("evenodd"); g.strokeStyle = "#c8f26d"; g.lineWidth = 1; g.stroke();
+    const at = itemOnSheet(pl, i); g.fillStyle = "#c8f26d"; g.font = "600 12px system-ui"; g.fillText(String(i + 1), (at.x + 1.5) * k, (at.y + 5) * k);
+  }
+  g.fillStyle = "#c8f26d"; g.beginPath(); g.moveTo(3 * k, 3 * k); g.lineTo(9 * k, 3 * k); g.lineTo(3 * k, 9 * k); g.closePath(); g.fill(); g.restore();
+}
+const batchKey = pl => [pl.T.length, pl.b.join(","), pl.clear, pl.orient].join("|");
+for (const id of ["bQty", "bBed", "bGap", "bNames", "bClear", "bDepth", "bJigW"]) $(id).addEventListener("input", () => { batchSummary(); priceUpdate(); });
+async function batchExport(jigOnly) {
+  const st = $("bStatus"); if (S.exporting) { st.textContent = "An export is already running."; return; }
+  const pl = batchPlan(); if (pl.err) { st.className = "status err"; st.textContent = pl.err; return; }
+  if (jigOnly && pl.jigErr) { st.className = "status err"; st.textContent = pl.jigErr; return; }
+  const ctl = new AbortController(); S.exporting = ctl; $("xCancel").classList.remove("hidden"); st.className = "status"; st.textContent = "Building the batch…";
+  const stamp = stampNow(), base = exportName().name, files = [], ppi = +$("dpi").value, cal = calib(), bleed = +$("bleed").value || 0;
+  const keep = { text: $("ltText").value }, perItemText = pl.names.length > 0, perItemGeo = perItemText && ($("fStyle").value === "relief" || (+$("fRaise").value || 0) > 0);
+  const setItem = i => { if (!perItemText) return; $("ltText").value = pl.names[i] || ""; S.art = getArt(); S.pl = computePlacement(); };
+  const tick = () => new Promise(r => setTimeout(r, 0)), checkAbort = () => { if (ctl.signal.aborted) throw new UserError("Batch cancelled. Nothing was saved and your project is unchanged."); };
+  try {
+    await ensureFont($("ltFont").value); await checkpoint("before batch");
+    const jig = pl.jigErr ? null : buildJig(pl);
+    if (jig) files.push({ name: `${base}_Jig_${n1(pl.jigW)}x${n1(pl.jigH)}x${n1(pl.jigT)}mm_${pl.cells}up_STL_${stamp}.stl`, data: stlBinary(jig.tris) });
+    if (!jigOnly) {
+      // Bambu plates
+      const itemTris = i => { if (!perItemGeo) return pl.T; setItem(i); const f = buildFeatures(); const o = new Float32Array(S.base.tris.length + f.length); o.set(S.base.tris); o.set(f, S.base.tris.length); return o; };
+      const plateStl = (from, n, src) => { const parts = []; let len = 0; for (let k = 0; k < n; k++) { const t = src(from + k); parts.push(t); len += t.length; }
+        const o = new Float32Array(len); let w = 0;
+        parts.forEach((t, k) => { const r = Math.floor(k / pl.pc), c = k % pl.pc, bb = triBBox(t), dx = pl.pm + c * (pl.bw + pl.pg) - bb[0], dy = pl.P[1] - pl.pm - (r + 1) * pl.bh - r * pl.pg - bb[1], dz = -bb[2]; for (let i = 0; i < t.length; i += 3) { o[w++] = t[i] + dx; o[w++] = t[i + 1] + dy; o[w++] = t[i + 2] + dz; } });
+        return stlBinary(o); };
+      const plateRuns = (label, src, uniq) => { const out = []; for (let p = 0; p < pl.plates; p++) { const from = p * pl.perPlate, n = Math.min(pl.perPlate, pl.qty - from); if (!uniq && p > 0 && n === pl.perPlate && p < pl.plates - 1) continue; const name = uniq || pl.plates === 1 ? `${base}_${label}_${String(p + 1).padStart(2, "0")}_of_${String(pl.plates).padStart(2, "0")}_${n}pcs_STL_${stamp}.stl` : `${base}_${label}_${n === pl.perPlate ? "full" : "last"}_${n}pcs_STL_${stamp}.stl`; out.push({ name, from, n }); } return out; };
+      for (const r of plateRuns("Plate", itemTris, perItemGeo)) { st.textContent = "Bambu plates…"; files.push({ name: r.name, data: plateStl(r.from, r.n, itemTris) }); await tick(); checkAbort(); }
+      if (S.stand && S.stand.tris) for (const r of plateRuns("StandBasePlate", () => S.stand.tris, false)) files.push({ name: r.name, data: plateStl(r.from, r.n, () => S.stand.tris) });
+      // Omni sheet images matched to the jig
+      if (jig) {
+        const Gi = printGeom(ppi, bleed, cal, pl.sf), Gs = { w: Math.round(pl.jigW / 25.4 * ppi), h: Math.round(pl.jigH / 25.4 * ppi), ppi }; Gs.ax = Gs.w / pl.jigW; Gs.ay = Gs.h / pl.jigH; Gs.ppmX = Math.round(Gs.w / (pl.jigW / 1000)); Gs.ppmY = Math.round(Gs.h / (pl.jigH / 1000));
+        Gs.strip = Math.max(1, Math.min(Gs.h, Math.floor(4e6 / Gs.w)));
+        const mk = (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c.getContext("2d", { willReadFrequently: true }); }, ig = mk(Gi.w, Gs.strip), im = mk(Gi.w, Gs.strip);
+        const kinds = ["print", ...(lum(S.filament) < 0.8 ? ["white"] : [])];
+        const sheetsToMake = []; for (let s = 0; s < pl.sheets; s++) { const from = s * pl.cells, n = Math.min(pl.cells, pl.qty - from); if (!perItemText && s > 0 && n === pl.cells && s < pl.sheets - 1) continue; sheetsToMake.push({ s, from, n }); }
+        for (const sh of sheetsToMake) for (const kind of kinds) {
+          const pos = []; for (let k = 0; k < sh.n; k++) { const at = itemOnSheet(pl, k); pos.push({ i: sh.from + k, x: Math.round(at.x * Gs.ax), y: Math.round(at.y * Gs.ay) }); }
+          const paint = (g, y0) => { g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = "source-over"; g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+            for (const p of pos) { if (p.y >= y0 + Gs.strip || p.y + Gi.h <= y0) continue; setItem(p.i); paintPrint(ig, im, Gi, y0 - p.y, kind); g.drawImage(ig.canvas, p.x, 0); } };
+          const label = perItemText || pl.sheets === 1 ? `${String(sh.s + 1).padStart(2, "0")}_of_${String(pl.sheets).padStart(2, "0")}` : (sh.n === pl.cells ? "full" : "last");
+          const r = await pngTiled(Gs, paint, p => { st.textContent = `Omni sheet ${label}${kind === "white" ? " (white ink)" : ""}… ${Math.round(p * 100)}%`; }, ctl.signal);
+          files.push({ name: `${base}_Sheet_${label}_${sh.n}pcs_${n1(pl.jigW)}x${n1(pl.jigH)}mm_${kind === "white" ? "WhiteLayer" : "UV"}_${ppi}ppi_${stamp}.png`, data: r.u8 });
+        }
+      }
+      if ($("bSingles").checked) for (let i = 0; i < (perItemText ? pl.qty : 1); i++) { setItem(i); const Gi = printGeom(ppi, bleed, cal, pl.sf), r = await pngTiled(Gi, "print", null, ctl.signal); files.push({ name: `${base}_Item_${String(i + 1).padStart(3, "0")}${perItemText ? "_" + safeName(pl.names[i]) : ""}_${n1(pl.sf.W)}x${n1(pl.sf.H)}mm_UV_${ppi}ppi_${stamp}.png`, data: r.u8 }); checkAbort(); }
+      // order sheet + instructions
+      const rows = [["item", "name", "omni_run", "jig_pocket_row", "jig_pocket_col", "bambu_plate"]];
+      for (let i = 0; i < pl.qty; i++) { const cell = pl.jigErr ? null : cellOrigin(pl, i % pl.cells); rows.push([i + 1, pl.names[i] || "", pl.jigErr ? "" : Math.floor(i / pl.cells) + 1, cell ? cell.r + 1 : "", cell ? cell.c + 1 : "", Math.floor(i / pl.perPlate) + 1]); }
+      files.push({ name: `${base}_OrderSheet_${stamp}.csv`, data: rows.map(r => r.map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(",")).join("\n") + "\n" });
+      const xp = xtoolPlace(), lines = [`${base} · batch of ${pl.qty} · saved ${new Date().toLocaleString()}`, "",
+        `BAMBU (${pl.P[3]}): ${pl.perPlate} per plate, ${pl.plates} plate(s). ${perItemGeo ? "Each plate file is unique (personalized raised lettering)." : "Plate files marked 'full' are reused for every full plate; 'last' is the final partial plate."}`,
+        ...(S.base.pocket ? [`NFC: pause every plate at ${S.base.pocket.pauseZ.toFixed(2)} mm (layer ${S.base.pocket.pauseLayer}) and drop a chip in each pocket.`] : []),
+        ...(pl.jigErr ? [`JIG: ${pl.jigErr}`] : [
+          `JIG: print the Jig STL once (${n1(pl.jigW)} x ${n1(pl.jigH)} x ${pl.jigT} mm, ${pl.cols} x ${pl.rows} pockets, ${n1(pl.pd)} mm deep, ${pl.clear} mm clearance). The notch marks the top-left corner.`,
+          `OMNI: put the jig on the ${pl.bed === OMNI_BED.std ? "standard" : "large"} bed with the notch at the back-left, place parts ${pl.orient === "bottom" ? "flipped over sideways (like turning a page)" : "face up"} in the pockets, back edge away from you.`,
+          `SHEET IMAGES: import at exactly ${n1(pl.jigW)} x ${n1(pl.jigH)} mm (ratio locked), rotation 0, and line the image edges up with the jig edges using Pixel-Scan. Each sheet covers one jig load (${pl.cells} items). ${perItemText ? "Sheets are numbered in order; see the order sheet for which name goes in which pocket." : "Use the 'full' sheet for every full jig and 'last' for the final partial load."}`,
+          `Each item's print is exactly ${n1(pl.sf.W)} x ${n1(pl.sf.H)} mm and sits only on its own part (never bigger than the part). ${xp.up}.`]),
+        ...(S.stand && S.stand.tris ? ["STAND BASES: the StandBasePlate files hold the matching bases."] : [])];
+      files.push({ name: `README_${stamp}.txt`, data: lines.join("\n") + "\n" });
+    }
+    st.textContent = "Packing the zip…"; await tick(); checkAbort();
+    const res = files.length === 1 && jigOnly && !dlApi ? await saveFile(files[0].name, files[0].data) : await saveFile(`${base}_${jigOnly ? "Jig" : "Batch_" + pl.qty + "pcs"}_${stamp}.zip`, zip(files));
+    st.className = res === "saved" ? "status ok" : "status"; st.textContent = res === "saved" ? `Saved ${files.length} file${files.length === 1 ? "" : "s"}${jigOnly ? "" : ` for ${pl.qty} items`}.` : res === "declined" ? "Download cancelled." : "Another download is still open. Try again in a moment.";
+  } catch (e) { console.error(e); st.className = "status err"; st.textContent = (e && e.message) || "Batch export failed. Your project is unchanged."; }
+  finally { S.exporting = null; $("xCancel").classList.add("hidden"); $("ltText").value = keep.text; refreshArt(); }
+}
+$("bZip").onclick = () => batchExport(false); $("bJig").onclick = () => batchExport(true);
+
+/* =========================================================
+   Instant production pricing
+   ========================================================= */
+const PRICE_IDS = ["prFil", "prDens", "prFill", "prGrams", "prMin", "prRate", "prInk", "prOmniMin", "prOmniRate", "prLabor", "prLabMin", "prSetup", "prExtra", "prWaste", "prMargin"];
+const PRICE_DEF = {}; PRICE_IDS.forEach(id => PRICE_DEF[id] = $(id).value);
+setTimeout(async () => { try { const v = await kvGet("omni-pricing"); if (v) { for (const id of PRICE_IDS) if (v[id] != null) $(id).value = v[id]; priceUpdate(); } } catch (e) {} }, 0);
+const money = v => "$" + (Math.round(v * 100) / 100).toFixed(2);
+function priceCalc() {
+  if (!S.base || !S.surf) return null;
+  const num = id => { const v = parseFloat($(id).value); return isFinite(v) ? v : 0; }, pl = S.batchPlan && !S.batchPlan.err ? S.batchPlan : batchPlan(), qty = pl.qty || 1;
+  const v = meshReport().volume / 1000, partVol = v + (S.stand && S.stand.tris ? Math.abs(validateMesh(S.stand.tris).volume) / 1000 : 0); // cm³
+  const grams = $("prGrams").value !== "" ? num("prGrams") : partVol * num("prDens") * num("prFill") / 100;
+  const minutes = $("prMin").value !== "" ? num("prMin") : 3 + grams * 1.6; // rough: ~1.6 min per gram on a Bambu, plus heat-up share
+  const inkArea = (look().bgFill === "ink" ? S.surf.area || S.surf.W * S.surf.H : S.pl && S.art ? Math.min(S.pl.w * S.pl.h, S.surf.area || S.surf.W * S.surf.H) : 0) / 100, perSheet = pl.cells || 1, sheets = pl.sheets || qty;
+  const c = {
+    material: grams / 1000 * num("prFil"), bambu: minutes / 60 * num("prRate"), ink: inkArea * num("prInk") * (lum(S.filament) < 0.8 ? 1.6 : 1),
+    omni: sheets * num("prOmniMin") / 60 * num("prOmniRate") / qty, labor: (num("prLabMin") + num("prSetup") / qty) / 60 * num("prLabor"), extras: num("prExtra")
+  };
+  const sub = Object.values(c).reduce((a, b) => a + b, 0), waste = sub * num("prWaste") / 100, cost = sub + waste, m = clamp(num("prMargin"), 0, 95) / 100, price = cost / (1 - m);
+  return { c, grams, minutes, inkArea, qty, sub, waste, cost, price, margin: m, est: { grams: $("prGrams").value === "", min: $("prMin").value === "" }, sheets, perSheet };
+}
+function priceUpdate() {
+  const r = priceCalc(), el = $("prOut"); if (!r) { el.innerHTML = ""; return; }
+  const row = (k, v) => `<div><b>${k}</b>${v}</div>`;
+  el.innerHTML = row("Suggested price each", `<span class="big">${money(r.price)}</span>`) + row(`Order of ${r.qty}`, `<span class="big">${money(r.price * r.qty)}</span>`) +
+    row("Cost each", `${money(r.cost)} (profit ${money(r.price - r.cost)} each, ${money((r.price - r.cost) * r.qty)} total)`) +
+    row("Filament", `${money(r.c.material)} · ${r.grams.toFixed(1)} g${r.est.grams ? " (estimate)" : ""}`) + row("Bambu time", `${money(r.c.bambu)} · ${Math.round(r.minutes)} min${r.est.min ? " (estimate)" : ""}`) +
+    row("UV ink", `${money(r.c.ink)} · ${r.inkArea.toFixed(1)} cm²${lum(S.filament) < 0.8 ? " + white" : ""}`) + row("Omni time", `${money(r.c.omni)} · ${r.sheets} run${r.sheets === 1 ? "" : "s"}`) +
+    row("Labor", money(r.c.labor)) + row("Extras", money(r.c.extras)) + row("Waste / reprints", money(r.waste));
+  $("prStatus").textContent = r.est.grams || r.est.min ? "Grams and minutes are estimates from the model volume. For exact numbers, slice in Bambu Studio and type them in." : "";
+}
+for (const id of PRICE_IDS) $(id).addEventListener("input", () => { priceUpdate(); const o = {}; for (const k of PRICE_IDS) o[k] = $(k).value; kvSet("omni-pricing", o).catch(() => {}); });
+$("prReset").onclick = () => { for (const id of PRICE_IDS) $(id).value = PRICE_DEF[id]; kvDel("omni-pricing").catch(() => {}); priceUpdate(); };
+$("prCopy").onclick = async () => {
+  const r = priceCalc(); if (!r) return; const d = S.dims;
+  const txt = `Quote · ${exportName().name}\n${r.qty} × ${n1(d.x)} × ${n1(d.y)} × ${n1(d.z)} mm, full-color UV print${S.base.pocket ? ", NFC chip inside" : ""}${S.stand && S.stand.tris ? ", with stand" : ""}\nPrice each: ${money(r.price)}\nTotal: ${money(r.price * r.qty)}\n`;
+  try { await navigator.clipboard.writeText(txt); $("prStatus").textContent = "Quote copied."; } catch (e) { $("prStatus").textContent = txt; }
+};
+
+/* =========================================================
+   Inspect: standard views, section cut, X-ray, edges, 2-point measure
+   ========================================================= */
+const VIEWS = { iso: [-Math.PI / 2 + 0.45, 0.95], top: [-Math.PI / 2, 0.05], bottom: [-Math.PI / 2, Math.PI - 0.05], front: [-Math.PI / 2, Math.PI / 2], back: [Math.PI / 2, Math.PI / 2], left: [Math.PI, Math.PI / 2], right: [0, Math.PI / 2] };
+function setStdView(k) { if (!V.orb || !VIEWS[k]) return; V.orb.th = VIEWS[k][0]; V.orb.ph = VIEWS[k][1]; V.pan.set(0, 0, 0); requestRender(); }
+document.querySelectorAll("#vtools [data-view]").forEach(b => b.onclick = () => setStdView(b.dataset.view));
+$("vTools").onclick = () => { const on = $("vtools").classList.toggle("hidden") === false; $("vTools").setAttribute("aria-pressed", on); };
+V.clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e6); V.meas = [];
+function cutLabel() { const v = +$("vCut").value; if (v >= 1000 || !V.wb) { $("vCutLbl").textContent = "off"; return; } $("vCutLbl").textContent = "Z " + fmtU(V.clip.constant - V.wb[2]); }
+$("vCut").addEventListener("input", () => { applyInspect(); requestRender(); });
+$("vXray").addEventListener("input", () => { applyInspect(); requestRender(); });
+$("vEdges").addEventListener("input", () => update3d());
+function applyInspect() {
+  if (!V.r || !V.root) return; const v = +$("vCut").value, on = v < 1000 && V.wb, xr = $("vXray").checked;
+  V.r.localClippingEnabled = !!on; if (on) V.clip.constant = V.wb[2] + (V.wb[5] - V.wb[2]) * v / 1000; cutLabel();
+  for (const c of V.caps || []) { c.parent && c.parent.remove(c); } V.caps = [];
+  const meshes = []; V.root.traverse(o => { if (o.isMesh && o.material && !o.userData.cap) meshes.push(o); });
+  for (const o of meshes) {
+    const m = o.material; m.clippingPlanes = on ? [V.clip] : null; m.side = xr ? THREE.DoubleSide : THREE.FrontSide; m.transparent = xr; m.opacity = xr ? 0.35 : 1; m.depthWrite = !xr; m.needsUpdate = true;
+    if (on && !xr) { // inside faces of the cut show solid material in a flat color, so the cut reads as filled and pockets stand out
+      V.capMat = V.capMat || new THREE.MeshBasicMaterial({ color: 0xe0566b, side: THREE.BackSide }); V.capMat.clippingPlanes = [V.clip];
+      const c = new THREE.Mesh(o.geometry, V.capMat); c.userData.cap = true; c.position.copy(o.position); c.rotation.copy(o.rotation); c.scale.copy(o.scale); o.parent.add(c); V.caps.push(c);
+    }
+  }
+}
+$("vMeasure").onclick = () => { V.measuring = !V.measuring; $("vMeasure").setAttribute("aria-pressed", V.measuring); if (V.measuring) { V.meas = []; drawMeasure(); } $("vMeasOut").textContent = V.measuring ? "Measure: tap the first point." : "Measure: tap two points on the model."; };
+$("vMeasClr").onclick = () => { V.meas = []; drawMeasure(); $("vMeasOut").textContent = V.measuring ? "Measure: tap the first point." : "Measure: tap two points on the model."; };
+function measurePick(e) {
+  const r = $("view3d").getBoundingClientRect(), m = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), rc = new THREE.Raycaster(); rc.setFromCamera(m, V.cam);
+  const targets = [V.pickMesh]; if (V.standMesh) targets.push(V.standMesh); V.pickMesh.updateMatrixWorld(true);
+  const hit = rc.intersectObjects(targets)[0]; if (!hit) return;
+  if (V.meas.length >= 2) V.meas = []; V.meas.push(hit.point.clone()); drawMeasure();
+  if (V.meas.length === 1) $("vMeasOut").textContent = "Measure: tap the second point.";
+  else { const [a, b] = V.meas, d = a.distanceTo(b); $("vMeasOut").innerHTML = `<b>${fmtU(d)}</b> · ΔX ${fmtU(Math.abs(b.x - a.x))} · ΔY ${fmtU(Math.abs(b.y - a.y))} · ΔZ ${fmtU(Math.abs(b.z - a.z))}`; }
+}
+function drawMeasure() {
+  if (!V.scene) return; if (V.measObj) { V.scene.remove(V.measObj); disposeGroup(V.measObj); }
+  const g = new THREE.Group(); V.measObj = g;
+  const sz = V.wb ? Math.max(V.wb[3] - V.wb[0], V.wb[4] - V.wb[1]) * 0.012 + 0.3 : 0.8;
+  for (const p of V.meas) { const s = new THREE.Mesh(new THREE.SphereGeometry(sz, 16, 12), new THREE.MeshBasicMaterial({ color: 0x7fd0ff, depthTest: false })); s.position.copy(p); s.renderOrder = 9; g.add(s); }
+  if (V.meas.length === 2) { const lg = new THREE.BufferGeometry().setFromPoints(V.meas); const ln = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0x7fd0ff, depthTest: false })); ln.renderOrder = 9; g.add(ln); }
+  V.scene.add(g); requestRender();
+}
+function placeMeasLabel() {
+  const lb = $("measLbl"); if (V.meas.length !== 2 || S.view !== "3d") { lb.classList.add("hidden"); return; }
+  const el = $("view3d"), mid = V.meas[0].clone().add(V.meas[1]).multiplyScalar(0.5).project(V.cam);
+  if (mid.z > 1) { lb.classList.add("hidden"); return; }
+  lb.classList.remove("hidden"); lb.style.left = ((mid.x + 1) / 2 * el.clientWidth).toFixed(1) + "px"; lb.style.top = ((1 - mid.y) / 2 * el.clientHeight).toFixed(1) + "px"; lb.textContent = fmtU(V.meas[0].distanceTo(V.meas[1]));
+}
 /* =========================================================
    2D print view
    ========================================================= */
@@ -2062,6 +2370,7 @@ function updateInfo() {
   if (isCut) { const o = $("mOutline").value; $("mMarginRow").classList.toggle("hidden", o !== "follow"); $("mFillRow").classList.toggle("hidden", o !== "follow"); $("mRadiusRow").classList.toggle("hidden", o !== "rounded"); $("mHoleRow").classList.toggle("hidden", $("mRing").value === "none");
     const lipOn = $("mLip").checked; $("mLipOpts").classList.toggle("hidden", !lipOn); $("mLipNote").classList.toggle("hidden", !lipOn);
     if (lipOn && S.base && S.base.lip) $("mLipNote").textContent = `Total height ${fmtU(S.dims.z)} (Z) = ${fmtU(S.base.t)} floor + ${fmtU(S.base.lip.h)} lip. Change Z to make it taller or shorter. The Omni prints the surface inside the lip; tap the lip in the 3D view if you want to print on it instead.`; }
+  $("pTabRow").classList.toggle("hidden", !(S.spec && S.spec.kind === "shape" && S.spec.ring !== "none"));
   $("nfcOpts").classList.toggle("hidden", !$("nfcOn").checked); $("standOpts").classList.toggle("hidden", !$("standOn").checked);
   if (S.stand && S.stand.err) { $("standInfo").className = "status err"; $("standInfo").textContent = S.stand.err; }
   else if (S.stand) { const b = S.stand; $("standInfo").className = "status ok"; $("standInfo").textContent = `Base ${n1(b.w)} × ${n1(b.d)} × ${n1(b.h)} mm. Slot ${b.slotW.toFixed(2)} mm wide (part ${(b.slotW - (+$("standClear").value || 0)).toFixed(2)} mm + clearance), ${n1(b.slotDepth)} mm deep, leaning back ${b.angle}°.`; }
@@ -2190,7 +2499,7 @@ function zip(files) {
   return new Blob([...chunks, ...central, new Uint8Array(end.buffer)], { type: "application/zip" });
 }
 function svgDims(G) { return { w: G.wmm.toFixed(4), h: G.hmm.toFixed(4) }; }
-function printSvg(png, pr) { const { w, h } = svgDims(pr), desc = `Artwork ${pr.artW.toFixed(3)} x ${pr.artH.toFixed(3)} mm; bleed ${pr.bleed.toFixed(2)} mm and registration margin ${pr.reg.toFixed(2)} mm on each side; ${pr.w} x ${pr.h} px; calibration: ${pr.cal.on ? pr.cal.name + " (do not also apply this offset in xTool Studio)" : "none"}.`; return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}mm" height="${h}mm" viewBox="0 0 ${w} ${h}">\n<desc>${desc}</desc>\n<image width="${w}" height="${h}" preserveAspectRatio="none" xlink:href="data:image/png;base64,${b64(png)}"/>\n</svg>\n`; }
+function printSvg(png, pr) { const { w, h } = svgDims(pr), desc = `Exactly ${pr.wmm.toFixed(2)} x ${pr.hmm.toFixed(2)} mm = the print surface (never bigger than the part). In xTool Studio: W ${pr.wmm.toFixed(2)} mm, H ${pr.hmm.toFixed(2)} mm, rotation 0. ${xtoolPlace().up}; ${pr.w} x ${pr.h} px; calibration: ${pr.cal.on ? pr.cal.name + " (do not also apply this offset in xTool Studio)" : "none"}.`; return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}mm" height="${h}mm" viewBox="0 0 ${w} ${h}">\n<desc>${desc}</desc>\n<image width="${w}" height="${h}" preserveAspectRatio="none" xlink:href="data:image/png;base64,${b64(png)}"/>\n</svg>\n`; }
 function templateSvg() {
   const sf = S.surf, d = sf.loops.map(l => { let s = ""; for (let i = 0; i < l.length; i += 2) s += (i ? "L" : "M") + l[i].toFixed(3) + " " + l[i + 1].toFixed(3); return s + "Z"; }).join("");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!-- ${sf.label}: ${sf.W.toFixed(2)} x ${sf.H.toFixed(2)} mm. Design inside the outline; keep 1 mm from the edge for anything important. -->\n<svg xmlns="http://www.w3.org/2000/svg" width="${sf.W.toFixed(3)}mm" height="${sf.H.toFixed(3)}mm" viewBox="0 0 ${sf.W.toFixed(3)} ${sf.H.toFixed(3)}">\n<path d="${d}" fill="#ffffff" fill-rule="evenodd" stroke="#ff0000" stroke-width="0.1"/>\n</svg>\n`;
@@ -2219,9 +2528,9 @@ function calib() {
 // pixels = round(mm / 25.4 × ppi); artwork, bleed and registration margins are reported separately
 function printGeom(ppi, bleed, cal, sf) {
   sf = sf || S.surf;
-  let reg = 0; if (cal.on) reg = Math.max(Math.abs(cal.dx), Math.abs(cal.dy)) + Math.max(0, (cal.sx - 1) * sf.W / 2, (cal.sy - 1) * sf.H / 2);
-  reg = Math.ceil(reg * 10 - 1e-9) / 10;
-  const m = bleed + reg, wmm = sf.W + 2 * m, hmm = sf.H + 2 * m;
+  // The print image is always exactly the print surface: never bigger than the part. Calibration shifts/scales the art
+  // inside it, and bleed only extends ink past the outline within that same rectangle.
+  const reg = 0, m = 0, wmm = sf.W, hmm = sf.H;
   const w = Math.max(1, Math.round(wmm / 25.4 * ppi)), h = Math.max(1, Math.round(hmm / 25.4 * ppi));
   return { sf, ppi, dpi: ppi, w, h, wmm, hmm, ax: w / wmm, ay: h / hmm, effX: w / wmm * 25.4, effY: h / hmm * 25.4, ppmX: Math.round(w / (wmm / 1000)), ppmY: Math.round(h / (hmm / 1000)), m, bleed, reg, cal, artW: sf.W, artH: sf.H };
 }
@@ -2257,14 +2566,14 @@ async function pngTiled(G, kind, onProg, signal) {
   const mk = (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c.getContext("2d", { willReadFrequently: true }); };
   if (typeof CompressionStream === "undefined") {
     if (G.w * G.h > 16e6) throw new UserError(`This browser can't build a ${G.w.toLocaleString()} × ${G.h.toLocaleString()} px image at full resolution, and the app never downscales silently. Open the app in Chrome, Edge or Safari 16.4 or newer, or choose a lower resolution yourself.`);
-    const g = mk(G.w, G.h), mg = mk(G.w, G.h); paintPrint(g, mg, G, 0, kind);
+    const g = mk(G.w, G.h), mg = mk(G.w, G.h); if (typeof kind === "function") kind(g, 0); else paintPrint(g, mg, G, 0, kind);
     return { u8: await canvasPng(g.canvas, G.ppi, G.ppmX, G.ppmY), G };
   }
-  const sh = Math.max(1, Math.min(G.h, Math.floor(4e6 / G.w))), g = mk(G.w, sh), mg = mk(G.w, sh), rowLen = G.w * 4 + 1;
+  const sh = G.strip || Math.max(1, Math.min(G.h, Math.floor(4e6 / G.w))), g = mk(G.w, sh), mg = mk(G.w, sh), rowLen = G.w * 4 + 1;
   const cs = new CompressionStream("deflate"), wr = cs.writable.getWriter(), parts = [];
   const reading = (async () => { const rd = cs.readable.getReader(); for (;;) { const { value, done } = await rd.read(); if (done) break; parts.push(value); } })();
   for (let y0 = 0; y0 < G.h; y0 += sh) {
-    const hs = Math.min(sh, G.h - y0); paintPrint(g, mg, G, y0, kind);
+    const hs = Math.min(sh, G.h - y0); if (typeof kind === "function") kind(g, y0); else paintPrint(g, mg, G, y0, kind);
     const d = g.getImageData(0, 0, G.w, hs).data, buf = new Uint8Array(hs * rowLen);
     for (let r = 0; r < hs; r++) { const o = r * rowLen, s0 = r * G.w * 4; buf[o] = 1; for (let i = 0; i < 4; i++) buf[o + 1 + i] = d[s0 + i]; for (let i = 4; i < G.w * 4; i++) buf[o + 1 + i] = (d[s0 + i] - d[s0 + i - 4]) & 255; }
     await wr.write(buf);
@@ -2299,10 +2608,12 @@ function readme(G, name) {
   return [name, "",
     `MODEL (STL, millimetres): ${(wb[3] - wb[0]).toFixed(2)} x ${(wb[4] - wb[1]).toFixed(2)} x ${(wb[5] - wb[2]).toFixed(2)} mm, placed for the Bambu ${P[3]}.`,
     `PRINT SURFACE: ${sf.label}, ${sf.W.toFixed(2)} x ${sf.H.toFixed(2)} mm.`,
+    `XTOOL STUDIO: set the image to exactly ${xtoolPlace().size} (ratio locked), rotation 0. ${xtoolPlace().up}. ${xtoolPlace().place}. The image is never bigger than the part.`,
+    `SAVED: ${new Date().toLocaleString()} (the date_time at the end of each file name sorts newest last).`,
     ...(S.stand && S.stand.tris ? [`STAND BASE (separate STL): ${n1(S.stand.w)} x ${n1(S.stand.d)} x ${n1(S.stand.h)} mm, slot ${S.stand.slotW.toFixed(2)} mm wide x ${n1(S.stand.slotDepth)} mm deep, leaning back ${S.stand.angle} degrees. Print it flat.`] : []),
     ...(S.base.pocket ? [`HIDDEN NFC POCKET: ${(S.base.pocket.r * 2).toFixed(1)} mm round, ${S.base.pocket.depth.toFixed(2)} mm deep, ${S.base.pocket.bot.toFixed(2)}-${S.base.pocket.top.toFixed(2)} mm from the bottom. In Bambu Studio add a pause at ${S.base.pocket.pauseZ.toFixed(2)} mm (layer ${S.base.pocket.pauseLayer} at ${S.base.pocket.layer} mm layer height). Insert the chip when it pauses, then resume.`] : []),
     `ARTWORK AREA: ${G.artW.toFixed(3)} x ${G.artH.toFixed(3)} mm (the printable surface).`,
-    `PRINT IMAGE CANVAS: ${G.wmm.toFixed(3)} x ${G.hmm.toFixed(3)} mm = artwork + ${G.bleed.toFixed(2)} mm bleed + ${G.reg.toFixed(2)} mm registration margin on each side.`,
+    `PRINT IMAGE: exactly ${G.wmm.toFixed(3)} x ${G.hmm.toFixed(3)} mm = the print surface. Never bigger than the part${G.bleed ? `; ink runs ${G.bleed.toFixed(2)} mm past the outline inside that size` : ""}.`,
     `PIXELS: ${G.w} x ${G.h} px = round(mm / 25.4 x ${G.ppi}); effective ${G.effX.toFixed(3)} x ${G.effY.toFixed(3)} ppi; PNG pHYs ${G.ppmX} x ${G.ppmY} px/m.`,
     G.cal.on ? `CALIBRATION APPLIED (UV artwork only, never the STL): profile "${G.cal.name}", ${shiftTxt(G.cal)}, scaled ${(G.cal.sx * 100).toFixed(3)}% x ${(G.cal.sy * 100).toFixed(3)}%. Do not also enter these offsets in xTool Studio.` : "CALIBRATION: none applied.",
     "NOTE: check the imported size in xTool Studio. Import settings there can change physical size; PNG metadata alone may not control it. The SVG states its size in mm.",
@@ -2334,7 +2645,12 @@ async function saveFile(filename, data) {
 function safeName(s) { return (s || "").normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 48); }
 function exportName() { const n = safeName($("fname").value) || autoName(), c = calib(); return { name: n, img: n + (c.on ? "_cal-" + slug(c.name) : "") }; }
 const n1 = v => String(Math.round(v * 10) / 10);
-function fileNames() {
+// local date-time for file names, sorts oldest → newest: 2026-11-15_034412
+function stampNow(d) { d = d || new Date(); const z = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`; }
+function fileNames(stamp) {
+  const F = fileNamesBase(); if (!stamp) return F; const o = {}; for (const k in F) o[k] = k === "name" ? F[k] : `${F[k]}_${stamp}`; return o;
+}
+function fileNamesBase() {
   const e = exportName(), d = S.dims, sf = S.surf, ppi = +$("dpi").value, cal = e.img.slice(e.name.length), sz = `${n1(sf.W)}x${n1(sf.H)}mm`;
   const sb = S.stand && S.stand.tris ? S.stand : null;
   return { stand: sb ? `${e.name}_StandBase_${n1(sb.w)}x${n1(sb.d)}x${n1(sb.h)}mm_STL` : `${e.name}_StandBase_STL`, stl: `${e.name}_${n1(d.x)}x${n1(d.y)}x${n1(d.z)}mm_STL`, png: `${e.name}_${sz}_UV_${ppi}ppi${cal}`, svg: `${e.name}_${sz}_UV${cal}`, white: `${e.name}_${sz}_WhiteLayer_${ppi}ppi${cal}`, test: `${e.name}_${sz}_AlignmentTest${cal}`, tpl: `${e.name}_SurfaceTemplate_${sz}`, bundle: `${e.name}_ProductionBundle${cal}`, name: e.name };
@@ -2359,7 +2675,7 @@ function exportChecks() {
   rows.push(v.selfX === null ? ["info", "Self-intersection check runs on generated outlines; imported STLs are checked for open and non-manifold edges only."] : [v.selfX === 0 ? "pass" : "fail", `Outline self-intersections: ${v.selfX}.`]);
   rows.push(["info", `Artwork area = printable surface (${sf.label}): ${sf.W.toFixed(3)} × ${sf.H.toFixed(3)} mm.` + (S.pl ? ` Artwork placed at ${S.pl.w.toFixed(2)} × ${S.pl.h.toFixed(2)} mm${Math.abs(S.pl.ky - 1) > 0.004 ? ", stretched because you allowed it" : ", proportions kept"}.` : "")]);
   const pxOk = G.w === Math.round(G.wmm / 25.4 * G.ppi) && G.h === Math.round(G.hmm / 25.4 * G.ppi);
-  rows.push([pxOk ? "pass" : "fail", `Print PNG ${G.w.toLocaleString()} × ${G.h.toLocaleString()} px = round(${G.wmm.toFixed(3)} mm / 25.4 × ${G.ppi}) × round(${G.hmm.toFixed(3)} mm / 25.4 × ${G.ppi}). Canvas = artwork ${G.artW.toFixed(2)} × ${G.artH.toFixed(2)} mm + bleed ${G.bleed.toFixed(2)} mm + registration ${G.reg.toFixed(2)} mm per side.`]);
+  rows.push([pxOk ? "pass" : "fail", `Print PNG ${G.w.toLocaleString()} × ${G.h.toLocaleString()} px = round(${G.wmm.toFixed(3)} mm / 25.4 × ${G.ppi}) × round(${G.hmm.toFixed(3)} mm / 25.4 × ${G.ppi}). Image = print surface ${G.artW.toFixed(2)} × ${G.artH.toFixed(2)} mm exactly (never bigger than the part).`]);
   rows.push(["info", `Effective resolution ${G.effX.toFixed(3)} × ${G.effY.toFixed(3)} ppi. PNG pHYs metadata ${G.ppmX} × ${G.ppmY} px/m.` + (S.lastPng ? ` Last export read back as ${S.lastPng.w} × ${S.lastPng.h} px, ${S.lastPng.ppmX} px/m.` : "")]);
   const { w: sw, h: shh } = svgDims(G); rows.push(["pass", `SVG width="${sw}mm" height="${shh}mm" viewBox="0 0 ${sw} ${shh}" (1 unit = 1 mm).`]);
   rows.push(["info", G.cal.on ? `Calibration "${G.cal.name}" applied to UV artwork only: ${shiftTxt(G.cal)}, scale ${(G.cal.sx * 100).toFixed(3)}% × ${(G.cal.sy * 100).toFixed(3)}%. The STL is never scaled by calibration. File names get _cal-${slug(G.cal.name)} so you don't apply it twice.` : "No UV calibration applied. Registration offset 0 mm."]);
@@ -2376,7 +2692,7 @@ function renderAccuracy() {
 async function exportFile(which, statusEl) {
   const st = statusEl || $("xStatus"); if (!S.base || !S.surf) return;
   if (S.exporting) { st.textContent = "An export is already running."; return; }
-  const F = fileNames(), dpi = +$("dpi").value, bleed = +$("bleed").value || 0, cal = calib(), ctl = new AbortController();
+  const F = fileNames(stampNow()), dpi = +$("dpi").value, bleed = +$("bleed").value || 0, cal = calib(), ctl = new AbortController();
   S.exporting = ctl; $("xCancel").classList.remove("hidden"); st.className = "status"; st.textContent = "Building files…";
   const prog = label => p => { st.textContent = `${label}… ${Math.round(p * 100)}%`; };
   try {
@@ -2416,17 +2732,30 @@ async function exportFile(which, statusEl) {
   } catch (e) { console.error(e); st.className = "status err"; st.textContent = (e && e.message) || "Export failed. Your project is unchanged."; }
   finally { S.exporting = null; $("xCancel").classList.add("hidden"); }
 }
+// How to place the print in xTool Studio: exact size, rotation, and which edge is the top of the image
+function xtoolPlace() {
+  const sf = S.surf; if (!sf) return { size: "", rot: "", up: "", place: "" };
+  const n = sf.n || [0, 0, 1], size = `W ${sf.W.toFixed(2)} mm × H ${sf.H.toFixed(2)} mm`;
+  let up, place;
+  if (sf.isProj || n[2] > 0.99) { up = "Top of the image = the back edge of the part (the far edge in the app's 3D view" + (S.spec && S.spec.ring && S.spec.ring !== "none" ? ", where the key ring tab is" : "") + ")"; place = "Lay the part face up, back edge away from you"; }
+  else if (n[2] < -0.99) { up = "Top of the image = the back edge of the part"; place = "Flip the part over sideways (like turning a page) so the back edge stays at the back, then lay it face up"; }
+  else { const side = sf.label.toLowerCase(), opp = { "front side": "back side", "back side": "front side", "left side": "right side", "right side": "left side" }[side] || "opposite side"; up = "Top of the image = the top of the part as it sat on the Bambu plate"; place = `Lay the part on its ${opp} so the ${side} faces up, with the part's top edge away from you`; }
+  return { size, rot: "0° (the image is already turned the right way; don't rotate it)", up, place };
+}
 function exportNotes() {
   if (!S.surf) return;
+  try { batchSummary(); priceUpdate(); } catch (e) { console.error(e); }
   const P = PRINTERS[$("printer").value], bleed = +$("bleed").value || 0, dpi = +$("dpi").value;
   $("xStlNote").textContent = `${fmtU(S.dims.x)} × ${fmtU(S.dims.y)} × ${fmtU(S.dims.z)}, positioned for the ${P[3]}. Print it in ${filamentName(S.filament)}.`;
-  $("xImgNote").textContent = `${S.surf.label}: ${fmtU(S.surf.W + 2 * bleed)} × ${fmtU(S.surf.H + 2 * bleed)} at ${dpi} dpi (surface plus ${bleed} mm bleed). ${lum(S.filament) < 0.8 ? "Your base isn't white, so print white ink under the color." : "White base: white ink underneath is optional."}`;
+  const xp = xtoolPlace();
+  $("xToolNote").innerHTML = `<b>xTool Studio:</b> size <b>${esc(xp.size)}</b> (lock the ratio) · rotation <b>0°</b> · ${esc(xp.up)}. ${esc(xp.place)}. The image is exactly the print surface and is never bigger than the part.`;
+  $("xImgNote").textContent = `${S.surf.label}: exactly ${fmtU(S.surf.W)} × ${fmtU(S.surf.H)} at ${dpi} ppi.${bleed ? ` Ink runs ${bleed} mm past the outline, still inside that size.` : ""} ${lum(S.filament) < 0.8 ? "Your base isn't white, so print white ink under the color." : "White base: white ink underneath is optional."}`;
   const fil = filamentName(S.filament), name = slug($("fname").value) || autoName();
   $("printSteps").innerHTML = [
-    `<li><b>Bambu:</b> unzip <code>${name}_bambu.zip</code>, open <code>${name}.stl</code> in Bambu Studio and print in <b>${fil}</b> with the ${P[3]}. Size should read ${S.dims.x.toFixed(1)} × ${S.dims.y.toFixed(1)} × ${S.dims.z.toFixed(1)} mm.</li>`,
+    `<li><b>Bambu:</b> open the newest <code>${name}_…_STL_<i>date_time</i>.stl</code> in Bambu Studio and print in <b>${fil}</b> with the ${P[3]}. Size should read ${S.dims.x.toFixed(1)} × ${S.dims.y.toFixed(1)} × ${S.dims.z.toFixed(1)} mm.</li>`,
     `<li>In Bambu Studio turn on <b>ironing</b> for top surfaces so the print face is smooth.</li>`,
     `<li><b>Omni:</b> lay the printed part with the <b>${S.surf.label.toLowerCase()}</b> facing up and scan it with Pixel-Scan.</li>`,
-    `<li>Import <code>${name}_print.svg</code> at 100% scale and center it on the part. It is ${fmtU(S.surf.W + 2 * bleed)} × ${fmtU(S.surf.H + 2 * bleed)}, which is the surface plus the bleed.</li>`,
+    `<li>Import the newest <code>…_UV_${dpi}ppi_<i>date_time</i>.png</code> (or the .svg). Set its size to exactly <b>${esc(xtoolPlace().size)}</b> with the ratio locked, rotation <b>0°</b>. ${esc(xtoolPlace().up)}. ${esc(xtoolPlace().place)}.</li>`,
     `<li>${lum(S.filament) < 0.8 ? `${fil} isn't white, so print <b>white ink</b> under the color. The white layer file is in the zip if you need it.` : "On white filament, white ink underneath is optional. Use it for the richest colors."}</li>`,
     `<li>Look over the printability checks on the Export step before printing a batch.</li>`
   ].join("");
@@ -2858,8 +3187,8 @@ const TESTS = [
   ["13 · UV artwork calibration", async () => {
     const sf = { W: 60, H: 40, loops: [[0, 0, 60, 0, 60, 40, 0, 40]], label: "Top face" }, cal = { on: true, dx: 0.3, dy: -0.2, sx: 100 / 100.4, sy: 60 / 59.8, name: "test" };
     const G0 = printGeom(720, 0, NOCAL, sf), G = printGeom(720, 0, cal, sf), T = stripT(G, 0), xc = T[0] * sf.W / 2 + T[4], yc = T[3] * sf.H / 2 + T[5];
-    const ok = G.artW === 60 && G.artH === 40 && G.reg > 0 && near(xc, (sf.W / 2 + G.m - 0.3) * G.ax, 1e-6) && near(yc, (sf.H / 2 + G.m + 0.2) * G.ay, 1e-6) && G0.reg === 0;
-    return [ok, `artwork stays 60 × 40 mm; registration margin ${G.reg.toFixed(2)} mm; center moves 0.30 mm left, 0.20 mm down; STL export takes no calibration input`];
+    const ok = G.artW === 60 && G.artH === 40 && G.wmm === 60 && G.hmm === 40 && G.w === G0.w && G.h === G0.h && near(xc, (sf.W / 2 + G.m - 0.3) * G.ax, 1e-6) && near(yc, (sf.H / 2 + G.m + 0.2) * G.ay, 1e-6) && G0.reg === 0;
+    return [ok, `artwork stays 60 × 40 mm; image stays exactly 60 × 40 mm (${G.w} × ${G.h} px, never bigger than the part); center moves 0.30 mm left, 0.20 mm down; STL export takes no calibration input`];
   }],
   ["14 · Saving and reopening keeps outline fixes", async () => {
     const c = tcan(400, 400, g => { g.fillStyle = "#e80"; g.fillRect(50, 50, 300, 300); }, "#ffffff");
@@ -2913,7 +3242,7 @@ async function loadSaved() {
   try { localStorage.getItem("x"); return Array.isArray(ls) ? ls : []; } catch (e) { return null; }
 }
 async function writeSaved(list) { if (await kvSet("saved", list)) return true; try { localStorage.setItem(SKEY, JSON.stringify(list)); return true; } catch (e) { return false; } }
-function controlState() { const ids = ["ltText","ltPos","ltFont","ltFg","ltOutline","ltOutlineW","bgFill","bg1","bg2","border","borderW","fStyle","fRaise","fLevels","fStep","fFrom","pInset","pOx","pOy","printer","nozzle","dpi","bleed","fname"]; const o = {}; for (const id of ids) o[id] = $(id).value; o.grad = $("grad").checked; o.mode = getMode(); return o; }
+function controlState() { const ids = ["ltText","ltPos","ltFont","ltFg","ltOutline","ltOutlineW","bgFill","bg1","bg2","border","borderW","fStyle","fRaise","fLevels","fStep","fFrom","pInset","pOx","pOy","printer","nozzle","dpi","bleed","fname"]; const o = {}; for (const id of ids) o[id] = $(id).value; o.grad = $("grad").checked; o.tab = $("pTab").checked; o.mode = getMode(); return o; }
 function projectItem() {
   const pv = S.lastPreview, thumbC = document.createElement("canvas");
   if (pv) { const s = Math.min(240 / pv.canvas.width, 240 / pv.canvas.height); thumbC.width = Math.max(1, Math.round(pv.canvas.width * s)); thumbC.height = Math.max(1, Math.round(pv.canvas.height * s)); thumbC.getContext("2d").drawImage(composeFace(pv), 0, 0, thumbC.width, thumbC.height); }
@@ -2992,7 +3321,7 @@ async function offerRestore() {
 }
 async function openSaved(it) {
   for (const [id, v] of Object.entries(it.controls)) if ($(id)) $(id).value = v;
-  $("grad").checked = !!it.controls.grad; setMode(it.controls.mode || "cover"); setFilament(it.filament);
+  $("grad").checked = !!it.controls.grad; $("pTab").checked = !!it.controls.tab; setMode(it.controls.mode || "cover"); setFilament(it.filament);
   S.artImg = null;
   if (it.art) {
     const img = await loadImageURL(it.art.data), src = toCanvas(img, 2400), A = prepareArt(src, it.art.bgMode, it.art.tol, it.art.tbNorm, it.art.label, src.width);
@@ -3020,7 +3349,7 @@ function histButtons() { $("undoBtn").disabled = H.idx <= 0; $("redoBtn").disabl
 function histApply(s) {
   H.lock = true; clearTimeout(H.timer);
   for (const [id, v] of Object.entries(s.controls)) if ($(id) && id !== "mode" && id !== "grad") $(id).value = v;
-  $("grad").checked = !!s.controls.grad; setMode(s.controls.mode || "cover"); setFilament(s.filament);
+  $("grad").checked = !!s.controls.grad; $("pTab").checked = !!s.controls.tab; setMode(s.controls.mode || "cover"); setFilament(s.filament);
   S.spec = { ...s.spec }; S.dims = { ...s.dims }; setLock(s.lock); S.driver = s.driver; S.pos = { ...s.pos }; S.rot = { ...s.rot }; S.surfSel = s.surfSel; S.keepW = s.keepW; S.keepH = s.keepH;
   S.artImg = s.art; if (s.art && s.edits) { s.art.edits = s.edits.slice(); rebuildMask(s.art); }
   S.snap = null; syncModelControls(); writeDims(); histButtons();
@@ -3043,6 +3372,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "?") $("keysHelp").classList.toggle("hidden");
   else if (k === "f") $("vFit").click();
   else if (k === "g") { V.showGrid = !V.showGrid; update3d(); }
+  else if (/^[0-6]$/.test(k) && S.view === "3d") setStdView(["iso", "front", "back", "left", "right", "top", "bottom"][+k]);
   else if (k === "m") { V.showDims = !V.showDims; update3d(); }
   else if (k === "v" && S.step !== "outline") setView(S.view === "3d" ? "2d" : "3d");
   else if (e.shiftKey && k === "d") saveCurrent(true);
@@ -3369,6 +3699,7 @@ function dropSnapRot() { if (S.snapRot && getMode() !== "snap") { $("pRot").valu
 document.querySelectorAll('input[name="pmode"]').forEach(r => r.addEventListener("input", () => { dropSnapRot(); if (getMode() === "keep" && S.pl) S.keepW = S.pl.w; scheduleArt(); }));
 $("pW").addEventListener("input", e => { const v = u2mm(parseFloat(e.target.value)); if (!(v > 0)) return; S.keepW = v; setMode("keep"); dropSnapRot(); scheduleArt(); });
 $("pRot").addEventListener("input", () => { S.snapRot = false; if (getMode() === "snap") setMode("contain"); scheduleArt(); });
+$("pTab").addEventListener("input", () => { S.snap = null; $("pOx").value = 0; $("pOy").value = 0; if ($("pTab").checked && getMode() === "contain") setMode("cover"); updateInfo(); scheduleArt(); });
 $("pStretch").addEventListener("input", () => { S.snap = null; if (!$("pStretch").checked) S.keepH = 0; updateInfo(); scheduleArt(); });
 // one-tap surface choice: handy for faces that sit on the build plate and are hard to tap
 function useFace(which) {
