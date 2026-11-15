@@ -200,7 +200,8 @@ input[type="color"] { width: 100%; height: 40px; border: 1px solid var(--line); 
 #dropOv { display: none; position: fixed; inset: 0; z-index: 90; pointer-events: none; background: rgba(10,17,19,.35); border: 3px dashed var(--accent, #c8f26d); border-radius: 14px; align-items: flex-start; justify-content: center; }
 body.dragging #dropOv { display: flex; }
 #dropMsg { margin-top: 18px; padding: 10px 16px; border-radius: 10px; background: var(--panel, #142022); color: var(--text, #fff); font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
-.nudge { align-items: flex-end; } .nudge .f.inline { margin: 0; min-width: 110px; flex: 0 0 auto; }
+.nudge { align-items: flex-end; }
+.describe { display: grid; gap: 8px; } .describe textarea { width: 100%; } #descParse b { color: var(--accent); font-weight: 600; } .nudge .f.inline { margin: 0; min-width: 110px; flex: 0 0 auto; }
 .checks li.info::before { background: var(--muted, #8aa); }
 .thumb { display: flex; gap: 10px; align-items: center; }
 .thumb canvas { width: 64px; height: 64px; object-fit: contain; border-radius: 10px; background: repeating-conic-gradient(#1b2a2d 0 25%, #132023 0 50%) 0 0/12px 12px; }
@@ -244,6 +245,14 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
 <section id="scr-model" class="model-step">
   <h1 class="hero">What will you create in 3D?</h1>
   <div class="maker">
+    <div class="describe">
+      <label class="f" for="descText">Describe it · no credits
+        <textarea id="descText" rows="2" placeholder="e.g. heart shape NFC payment stand, 100 mm, pink"></textarea>
+      </label>
+      <div class="btns"><button class="btn primary" id="descBtn">Build it</button></div>
+      <p class="status" id="descParse">Understands shapes (heart, circle, square, rectangle, rounded, hexagon), products (stand, keychain, coaster, plate), sizes (100 mm, 4 in, 60 x 40 mm, 4 mm thick), NFC, key ring hole, raised edge, filament colors and "quoted text".</p>
+    </div>
+    <div class="or">OR</div>
     <div class="upzone" id="upZone" role="button" tabindex="0" aria-label="Upload an image">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="16" height="14" rx="3"/><circle cx="14.5" cy="8.5" r="1.4"/><path d="M3 15l4.5-4.5L12 15"/><path d="M18 21v-6m-2.5 2.5L18 15l2.5 2.5"/></svg>
       <strong>Upload an image</strong>
@@ -461,6 +470,25 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <p class="note" id="mLipNote"></p>
       </section>
 
+      <section class="card c" id="standCard">
+        <h3>Stand base</h3>
+        <label class="check"><input type="checkbox" id="standOn"> Make a separate base that holds this part upright (sign / NFC payment stand)</label>
+        <div id="standOpts">
+          <div class="row">
+            <label class="f" for="standAngle">Lean back<span class="unit" data-unit="°"><input type="number" id="standAngle" min="0" max="25" step="1" value="10"></span></label>
+            <label class="f" for="standD">Base depth<span class="unit" data-unit="mm"><input type="number" id="standD" min="20" max="120" step="1" value="40"></span></label>
+            <label class="f" for="standH">Base height<span class="unit" data-unit="mm"><input type="number" id="standH" min="8" max="40" step="1" value="14"></span></label>
+          </div>
+          <div class="row">
+            <label class="f" for="standW">Base width<span class="unit" data-unit="mm"><input type="number" id="standW" min="0" max="250" step="1" value="0" placeholder="auto"></span></label>
+            <label class="f" for="standSlot">Slot depth<span class="unit" data-unit="mm"><input type="number" id="standSlot" min="3" max="30" step="0.5" value="9"></span></label>
+            <label class="f" for="standClear">Slot clearance<span class="unit" data-unit="mm"><input type="number" id="standClear" min="0" max="1.5" step="0.05" value="0.35"></span></label>
+          </div>
+          <p class="status" id="standInfo"></p>
+          <p class="note">The base is its own STL (shown next to your part). Print it flat; the part slides into the slot. Base width 0 = automatic (70% of the part's width).</p>
+        </div>
+      </section>
+
       <section class="card c" id="nfcCard">
         <h3>Hidden NFC chip pocket</h3>
         <label class="check"><input type="checkbox" id="nfcOn"> Add a hidden pocket inside the print for an NFC chip</label>
@@ -613,7 +641,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
       <section class="card c">
         <h3>① Bambu · 3D base</h3>
         <p class="note" id="xStlNote"></p>
-        <div class="btns"><button class="btn primary" id="xStl">Download STL (.zip)</button></div>
+        <div class="btns"><button class="btn primary" id="xStl">Download STL (.zip)</button><button class="btn hidden" id="xStand">Stand base STL</button></div>
       </section>
       <section class="card c">
         <h3>② Omni · print image</h3>
@@ -1138,7 +1166,7 @@ async function bodyRaster(spec, X, Y, src, driver) {
     W = cw + 2 * m; H = ch + 2 * m;
   }
   if (W > 600 || H > 600) throw new UserError("That would be larger than 600 mm. Try a smaller size.");
-  const pad = 3 + (spec.ring !== "none" ? outerR * 2 + 2 : 0), DW = W + pad * 2, DH = H + pad * 2, box = { x: pad, y: pad, w: W, h: H };
+  const stem = standStem(spec), pad = 3 + (spec.ring !== "none" ? outerR * 2 + 2 : 0) + (stem ? stem.down : 0), DW = W + pad * 2, DH = H + pad * 2, box = { x: pad, y: pad, w: W, h: H };
   const R = Math.min(12, 1100 / Math.max(DW, DH)), gw = Math.ceil(DW * R), gh = Math.ceil(DH * R);
   const cv = document.createElement("canvas"); cv.width = gw; cv.height = gh;
   const g = cv.getContext("2d", { willReadFrequently: true }); g.setTransform(R, 0, 0, R, 0, 0); g.fillStyle = "#fff";
@@ -1149,6 +1177,13 @@ async function bodyRaster(spec, X, Y, src, driver) {
   let F = alphaField(g, gw, gh);
   if (cut) { F = dilate(F, gw, gh, m * R); if (spec.fillHoles && src.type === "text") fillHoles(F, gw, gh); }
   if (spec.ring !== "none") { const c = placeRing(F, gw, gh, spec.ring, holeR * R, 0.9 * R); if (c) { c.x += (spec.ringDx || 0) * R; c.y -= (spec.ringDy || 0) * R; stampRing(F, gw, gh, c, outerR * R, holeR * R); } }
+  if (stem) { // flat-bottomed stem under a heart / circle / outline so it sits in the stand's slot
+    let yb = -1; for (let y = gh - 1; y >= 0 && yb < 0; y--) for (let x = 0; x < gw; x++) if (F[y * gw + x] >= 0.5) { yb = y; break; }
+    const cxp = (box.x + W / 2) * R, sw = clamp(W * 0.3, 15, 40) * R, y0 = yb - stem.up * R, y1 = yb + stem.down * R;
+    for (let y = Math.max(0, Math.floor(y0)); y <= Math.min(gh - 1, Math.ceil(y1)); y++) for (let x = Math.max(0, Math.floor(cxp - sw / 2)); x <= Math.min(gw - 1, Math.ceil(cxp + sw / 2)); x++) {
+      const v = clamp(Math.min(x + 0.5 - (cxp - sw / 2), cxp + sw / 2 - (x - 0.5), y + 0.5 - y0, y1 - (y - 0.5)), 0, 1); F[y * gw + x] = Math.max(F[y * gw + x], v);
+    }
+  }
   const lw = spec.lip ? Math.max(0, +spec.lipW || 0) : 0;
   const floor = lw > 0 ? fieldToPolys(erode(F, gw, gh, lw * R), gw, gh, R) : null;
   const polys = fieldToPolys(F, gw, gh, R);
@@ -1247,6 +1282,20 @@ function addPocket(base, nf) {
   }
   const merged = new Float32Array(T.length + out.length); merged.set(T); merged.set(out, T.length); base.tris = merged;
   return { cx, cy, r, top, bot, depth, cover: +(zt - top).toFixed(3), layer: L, pauseZ: +(top + L).toFixed(3), pauseLayer: Math.round((top + L) / L) };
+}
+// shapes without a flat bottom get a stem that goes into the stand's slot
+function standStem(sp) { if (!sp.stand || !sp.stand.on || (sp.kind === "shape" && (sp.shape === "rect" || sp.shape === "rounded"))) return null; return { up: 3, down: clamp(+sp.stand.slot || 9, 3, 30) }; }
+// Separate stand base: a block with a slot leaning back, extruded across its width (one watertight solid)
+function buildStandBase(st, plaqueW, plaqueT) {
+  const W = (+st.w > 0) ? +st.w : Math.max(40, Math.round(plaqueW * 0.7)), D = clamp(+st.d || 40, 20, 120), Hh = clamp(+st.h || 14, 8, 40), sd = clamp(+st.slot || 9, 3, Hh - 3);
+  const a = clamp(+st.angle || 0, 0, 25) * Math.PI / 180, s = plaqueT + clamp(+st.clear || 0.35, 0, 1.5), top = s / Math.cos(a), lean = sd * Math.tan(a);
+  const yf = D * 0.48 - top / 2, yb = yf + top;
+  if (yf - lean < 3) return { err: "The base is too shallow for this slot. Make Base depth bigger or the lean smaller." };
+  if (yb > D - 3) return { err: "The slot is too close to the back. Make Base depth bigger." };
+  const c = Math.min(5, (yf - lean) - 1.5, Hh * 0.4);
+  const prof = [0, 0, D, 0, D, Hh, yb, Hh, yb - lean, Hh - sd, yf - lean, Hh - sd, yf, Hh, c, Hh, 0, Hh - c];
+  const out = []; pushSolid(out, [{ outer: prof, holes: [] }], 0, W, (x, y, z) => [z, x, y]);
+  return { tris: new Float32Array(out), w: W, d: D, h: Hh, slotW: s, slotDepth: sd, angle: st.angle || 0 };
 }
 async function genBase() {
   const sp = S.spec, d = S.dims, fh = featHeight();
@@ -1841,6 +1890,9 @@ function update3d() {
     const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
     const ln = new THREE.LineSegments(g, new THREE.LineDashedMaterial({ color: 0x7fd0ff, dashSize: 1.2, gapSize: 0.8, depthTest: false, transparent: true, opacity: 0.9 })); ln.computeLineDistances(); ln.renderOrder = 5; V.root.add(ln);
   }
+  if (S.stand && S.stand.tris) {
+    const bb0 = triBBox(S.base.tris), sm = new THREE.Mesh(mk(S.stand.tris.slice()), V.sideMat); sm.position.set(bb0[3] + 12, bb0[1], 0); V.root.add(sm);
+  }
   V.pickMesh = new THREE.Mesh(mk(all.slice()), new THREE.MeshBasicMaterial()); V.pickMesh.matrixAutoUpdate = false; V.pickMesh.matrix.copy(M);
   // plate
   const P = PRINTERS[$("printer").value];
@@ -1855,8 +1907,9 @@ function update3d() {
   if (V.showDims) line([wb[0], wb[1] - off, wb[2]], [wb[3], wb[1] - off, wb[2]], 0x4fc1b4);
   if (V.showDims) { line([wb[0] - off, wb[1], wb[2]], [wb[0] - off, wb[4], wb[2]], 0xe0b04a); line([wb[3] + off, wb[1] - off, wb[2]], [wb[3] + off, wb[1] - off, wb[5]], 0x9a8cf0); }
   V.labelPts = { x: [(wb[0] + wb[3]) / 2, wb[1] - off * 2.2, wb[2]], y: [wb[0] - off * 2.2, (wb[1] + wb[4]) / 2, wb[2]], z: [wb[3] + off * 1.6, wb[1] - off * 1.6, (wb[2] + wb[5]) / 2] };
-  const sz = Math.max(wb[3] - wb[0], wb[4] - wb[1], (wb[5] - wb[2]) * 2);
-  V.base.set((wb[0] + wb[3]) / 2, (wb[1] + wb[4]) / 2, (wb[2] + wb[5]) / 2);
+  const vb = S.stand && S.stand.tris ? [wb[0], wb[1], wb[2], wb[3] + 12 + S.stand.w, Math.max(wb[4], wb[1] + S.stand.d), Math.max(wb[5], S.stand.h)] : wb;
+  const sz = Math.max(vb[3] - vb[0], vb[4] - vb[1], (vb[5] - vb[2]) * 2);
+  V.base.set((vb[0] + vb[3]) / 2, (vb[1] + vb[4]) / 2, (vb[2] + vb[5]) / 2);
   if (!V.fitFor || Math.abs(V.fitFor - sz) > sz * 0.3) { V.orb.dist = sz * 1.15 / (0.63 * Math.min(1, V.cam.aspect || 1)) + 15; V.fitFor = sz; }
   render3d();
 }
@@ -1949,6 +2002,8 @@ async function rebuild() {
     const base = await genBase(); if (id !== genId) return;
     const nf = S.spec.nfc; base.pocket = null; base.pocketErr = null;
     if (nf && nf.on) { const pk = addPocket(base, nf); if (pk.err) base.pocketErr = pk.err; else base.pocket = pk; }
+    const st = S.spec.stand; S.stand = null;
+    if (st && st.on) { const plT = base.lip || base.kind === "stl" || !base.t ? S.dims.z : base.t; S.stand = buildStandBase(st, S.dims.x, plT); }
     S.base = base;
     S.adj = base.kind === "stl" && !base.pocket ? (S.stl.adj || (S.stl.adj = buildAdj(S.stl.tris))) : buildAdj(base.tris);
     selectSurface(S.surfSel);
@@ -2007,7 +2062,11 @@ function updateInfo() {
   if (isCut) { const o = $("mOutline").value; $("mMarginRow").classList.toggle("hidden", o !== "follow"); $("mFillRow").classList.toggle("hidden", o !== "follow"); $("mRadiusRow").classList.toggle("hidden", o !== "rounded"); $("mHoleRow").classList.toggle("hidden", $("mRing").value === "none");
     const lipOn = $("mLip").checked; $("mLipOpts").classList.toggle("hidden", !lipOn); $("mLipNote").classList.toggle("hidden", !lipOn);
     if (lipOn && S.base && S.base.lip) $("mLipNote").textContent = `Total height ${fmtU(S.dims.z)} (Z) = ${fmtU(S.base.t)} floor + ${fmtU(S.base.lip.h)} lip. Change Z to make it taller or shorter. The Omni prints the surface inside the lip; tap the lip in the 3D view if you want to print on it instead.`; }
-  $("nfcOpts").classList.toggle("hidden", !$("nfcOn").checked);
+  $("nfcOpts").classList.toggle("hidden", !$("nfcOn").checked); $("standOpts").classList.toggle("hidden", !$("standOn").checked);
+  if (S.stand && S.stand.err) { $("standInfo").className = "status err"; $("standInfo").textContent = S.stand.err; }
+  else if (S.stand) { const b = S.stand; $("standInfo").className = "status ok"; $("standInfo").textContent = `Base ${n1(b.w)} × ${n1(b.d)} × ${n1(b.h)} mm. Slot ${b.slotW.toFixed(2)} mm wide (part ${(b.slotW - (+$("standClear").value || 0)).toFixed(2)} mm + clearance), ${n1(b.slotDepth)} mm deep, leaning back ${b.angle}°.`; }
+  else $("standInfo").textContent = "";
+  $("xStand").classList.toggle("hidden", !(S.stand && !S.stand.err));
   if (S.base && S.base.pocket) { const k = S.base.pocket; $("nfcInfo").className = "status ok"; $("nfcInfo").textContent = `Pocket ${(k.r * 2).toFixed(1)} mm round × ${k.depth.toFixed(2)} mm deep, from ${k.bot.toFixed(2)} to ${k.top.toFixed(2)} mm, with ${k.cover.toFixed(2)} mm of plastic on top. In Bambu Studio, add a pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer} at ${k.layer} mm layers), drop the chip in when it pauses, then resume.`; }
   else if (S.base && S.base.pocketErr) { $("nfcInfo").className = "status err"; $("nfcInfo").textContent = S.base.pocketErr; }
   else $("nfcInfo").textContent = "";
@@ -2042,7 +2101,7 @@ function drawThumb() {
   if (S.artImg) { const s = Math.min(c.width / S.artImg.w, c.height / S.artImg.h); g.drawImage(S.artImg.removed ? S.artImg.cut : S.artImg.orig, (c.width - S.artImg.w * s) / 2, (c.height - S.artImg.h * s) / 2, S.artImg.w * s, S.artImg.h * s); }
   else { g.fillStyle = "#8ba4a2"; g.font = "13px Barlow, sans-serif"; g.textAlign = "center"; g.fillText("No image", 64, 68); }
 }
-function autoName() { const L = $("ltText").value.split("\n")[0]; const base = (L && L.trim()) ? L : (S.artImg ? S.artImg.label : (S.spec && S.spec.kind === "stl" ? S.stl.name : "part")); return slug(base) + "-" + (S.spec && S.spec.product ? slug(PRODUCTS[S.spec.product] ? PRODUCTS[S.spec.product].label : S.spec.product) : "part"); }
+function autoName() { if (S.spec && S.spec.descName && !$("ltText").value.trim() && !S.artImg) return slug(S.spec.descName); const L = $("ltText").value.split("\n")[0]; const base = (L && L.trim()) ? L : (S.artImg ? S.artImg.label : (S.spec && S.spec.kind === "stl" ? S.stl.name : "part")); return slug(base) + "-" + (S.spec && S.spec.product ? slug(PRODUCTS[S.spec.product] ? PRODUCTS[S.spec.product].label : S.spec.product) : "part"); }
 
 /* =========================================================
    model setup from the different starts
@@ -2052,6 +2111,7 @@ function specFromProduct(key, overrides) {
   return Object.assign({ kind: p.kind, shape: p.shape || "rounded", radius: p.radius || 4, margin: p.margin || 2, fillHoles: true, ring: p.ring || "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!p.lip, lipH: 2, lipW: 3, product: key }, overrides || {});
 }
 function syncNfc() {
+  const sb = (S.spec && S.spec.stand) || {}; $("standOn").checked = !!sb.on; $("standAngle").value = sb.angle != null ? sb.angle : 10; $("standD").value = sb.d || 40; $("standH").value = sb.h || 14; $("standW").value = sb.w || 0; $("standSlot").value = sb.slot || 9; $("standClear").value = sb.clear != null ? sb.clear : 0.35;
   const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 0.8;
   $("nfcLayer").value = String(nf.layer || 0.2); $("nfcDx").value = nf.dx || 0; $("nfcDy").value = nf.dy || 0;
 }
@@ -2239,6 +2299,7 @@ function readme(G, name) {
   return [name, "",
     `MODEL (STL, millimetres): ${(wb[3] - wb[0]).toFixed(2)} x ${(wb[4] - wb[1]).toFixed(2)} x ${(wb[5] - wb[2]).toFixed(2)} mm, placed for the Bambu ${P[3]}.`,
     `PRINT SURFACE: ${sf.label}, ${sf.W.toFixed(2)} x ${sf.H.toFixed(2)} mm.`,
+    ...(S.stand && S.stand.tris ? [`STAND BASE (separate STL): ${n1(S.stand.w)} x ${n1(S.stand.d)} x ${n1(S.stand.h)} mm, slot ${S.stand.slotW.toFixed(2)} mm wide x ${n1(S.stand.slotDepth)} mm deep, leaning back ${S.stand.angle} degrees. Print it flat.`] : []),
     ...(S.base.pocket ? [`HIDDEN NFC POCKET: ${(S.base.pocket.r * 2).toFixed(1)} mm round, ${S.base.pocket.depth.toFixed(2)} mm deep, ${S.base.pocket.bot.toFixed(2)}-${S.base.pocket.top.toFixed(2)} mm from the bottom. In Bambu Studio add a pause at ${S.base.pocket.pauseZ.toFixed(2)} mm (layer ${S.base.pocket.pauseLayer} at ${S.base.pocket.layer} mm layer height). Insert the chip when it pauses, then resume.`] : []),
     `ARTWORK AREA: ${G.artW.toFixed(3)} x ${G.artH.toFixed(3)} mm (the printable surface).`,
     `PRINT IMAGE CANVAS: ${G.wmm.toFixed(3)} x ${G.hmm.toFixed(3)} mm = artwork + ${G.bleed.toFixed(2)} mm bleed + ${G.reg.toFixed(2)} mm registration margin on each side.`,
@@ -2275,7 +2336,8 @@ function exportName() { const n = safeName($("fname").value) || autoName(), c = 
 const n1 = v => String(Math.round(v * 10) / 10);
 function fileNames() {
   const e = exportName(), d = S.dims, sf = S.surf, ppi = +$("dpi").value, cal = e.img.slice(e.name.length), sz = `${n1(sf.W)}x${n1(sf.H)}mm`;
-  return { stl: `${e.name}_${n1(d.x)}x${n1(d.y)}x${n1(d.z)}mm_STL`, png: `${e.name}_${sz}_UV_${ppi}ppi${cal}`, svg: `${e.name}_${sz}_UV${cal}`, white: `${e.name}_${sz}_WhiteLayer_${ppi}ppi${cal}`, test: `${e.name}_${sz}_AlignmentTest${cal}`, tpl: `${e.name}_SurfaceTemplate_${sz}`, bundle: `${e.name}_ProductionBundle${cal}`, name: e.name };
+  const sb = S.stand && S.stand.tris ? S.stand : null;
+  return { stand: sb ? `${e.name}_StandBase_${n1(sb.w)}x${n1(sb.d)}x${n1(sb.h)}mm_STL` : `${e.name}_StandBase_STL`, stl: `${e.name}_${n1(d.x)}x${n1(d.y)}x${n1(d.z)}mm_STL`, png: `${e.name}_${sz}_UV_${ppi}ppi${cal}`, svg: `${e.name}_${sz}_UV${cal}`, white: `${e.name}_${sz}_WhiteLayer_${ppi}ppi${cal}`, test: `${e.name}_${sz}_AlignmentTest${cal}`, tpl: `${e.name}_SurfaceTemplate_${sz}`, bundle: `${e.name}_ProductionBundle${cal}`, name: e.name };
 }
 
 function meshReport() {
@@ -2323,8 +2385,11 @@ async function exportFile(which, statusEl) {
     const chk = exportChecks(), v = chk.v;
     let res, G = printGeom(dpi, bleed, cal), png = null;
     const stl = () => stlBinary(worldTrisFrom(v.clean)), direct = !dlApi;
+    const standStl = () => { const P = PRINTERS[$("printer").value], t = S.stand.tris, o = new Float32Array(t.length), dx = P[0] / 2 - S.stand.w / 2, dy = P[1] / 2 - S.stand.d / 2; for (let i = 0; i < t.length; i += 3) { o[i] = t[i] + dx; o[i + 1] = t[i + 1] + dy; o[i + 2] = t[i + 2]; } return stlBinary(o); };
+    const hasStand = S.stand && S.stand.tris;
     if (["png", "svg", "all"].includes(which)) { const r = await pngTiled(G, "print", prog("Print image"), ctl.signal); png = r.u8; S.lastPng = readPngHeader(png); }
-    if (which === "stl") res = direct ? await saveFile(`${F.stl}.stl`, stl()) : await saveFile(`${F.stl}.zip`, zip([{ name: `${F.stl}.stl`, data: stl() }]));
+    if (which === "stand") { if (!hasStand) throw new UserError("Turn on Stand base first."); res = direct ? await saveFile(`${F.stand}.stl`, standStl()) : await saveFile(`${F.stand}.zip`, zip([{ name: `${F.stand}.stl`, data: standStl() }])); }
+    else if (which === "stl") res = direct ? await saveFile(`${F.stl}.stl`, stl()) : await saveFile(`${F.stl}.zip`, zip([{ name: `${F.stl}.stl`, data: stl() }]));
     else if (which === "png") res = await saveFile(`${F.png}.png`, png);
     else if (which === "svg") res = await saveFile(`${F.svg}.svg`, printSvg(png, G));
     else if (which === "white") res = await saveFile(`${F.white}.png`, (await pngTiled(G, "white", prog("White layer"), ctl.signal)).u8);
@@ -2338,7 +2403,7 @@ async function exportFile(which, statusEl) {
       st.textContent = "Packing the zip…";
       const report = chk.rows.map(x => x[0].toUpperCase() + ": " + x[1].replace(/<[^>]+>/g, "")).join("\n");
       res = await saveFile(`${F.bundle}.zip`, zip([
-        { name: `${F.stl}.stl`, data: stl() }, { name: `${F.png}.png`, data: png }, { name: `${F.svg}.svg`, data: printSvg(png, G) },
+        { name: `${F.stl}.stl`, data: stl() }, ...(hasStand ? [{ name: `${F.stand}.stl`, data: standStl() }] : []), { name: `${F.png}.png`, data: png }, { name: `${F.svg}.svg`, data: printSvg(png, G) },
         { name: `${F.white}.png`, data: white.u8 }, { name: `${F.test}.png`, data: test.u8 }, { name: `${F.tpl}.svg`, data: templateSvg() },
         { name: "README.txt", data: readme(G, F.name) }, { name: "EXPORT_REPORT.txt", data: (chk.ok ? "RESULT: PASS (dimensions verified)" : "RESULT: FAIL (not exact)") + "\n\n" + report + "\n" }
       ]));
@@ -3205,14 +3270,85 @@ function lipChanged() {
   specFromControls(); updateInfo(); scheduleGeo();
 }
 for (const id of ["mLip", "mLipH", "mLipW"]) $(id).addEventListener("input", lipChanged);
+for (const id of ["standOn", "standAngle", "standD", "standH", "standW", "standSlot", "standClear"]) $(id).addEventListener("input", async () => {
+  if (!S.spec) return;
+  const old = { ...S.spec };
+  S.spec.stand = { on: $("standOn").checked, angle: +$("standAngle").value || 0, d: +$("standD").value || 40, h: +$("standH").value || 14, w: +$("standW").value || 0, slot: +$("standSlot").value || 9, clear: $("standClear").value === "" ? 0.35 : +$("standClear").value };
+  if (old.kind === "shape" && (!!standStem(old) !== !!standStem(S.spec) || (standStem(old) && standStem(old).down !== standStem(S.spec).down))) { try { await keepBodySize(old, S.spec); } catch (e) { console.error(e); } }
+  updateInfo(); scheduleGeo();
+});
 for (const id of ["nfcOn", "nfcD", "nfcH", "nfcCover", "nfcLayer", "nfcDx", "nfcDy"]) $(id).addEventListener("input", () => {
   if (!S.spec) return;
   S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 0.8, 0.4, 5), layer: +$("nfcLayer").value || 0.2, dx: +$("nfcDx").value || 0, dy: +$("nfcDy").value || 0 };
   updateInfo(); scheduleGeo();
 });
+
+/* =========================================================
+   Describe it (no credits): plain-language → parametric part
+   ========================================================= */
+const esc = x => String(x).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function parseDescription(raw) {
+  const t = " " + raw.toLowerCase().replace(/[“”]/g, '"').replace(/[’]/g, "'") + " ", P = { notes: [] }, has = re => re.test(t);
+  const q = raw.match(/["“]([^"”]+)["”]/); if (q) P.text = q[1].trim();
+  P.shape = has(/\bheart/) ? "heart" : has(/\b(circle|circular|round|disc|disk)\b/) ? "oval" : has(/\boval\b/) ? "oval" : has(/\bhex(agon)?\b/) ? "hexagon" : has(/\bsquare\b/) ? "square" : has(/\brounded\b/) ? "rounded" : has(/\b(rectangle|rectangular|rect)\b/) ? "rect" : null;
+  P.product = has(/\b(stand|sign|display|easel|holder|upright|payment|tap to pay|menu)\b/) ? "stand" : has(/\b(keychain|key chain|keyring|key ring tag|bag tag)\b/) ? "keychain" : has(/\bcoaster/) ? "coaster" : "plate";
+  P.nfc = has(/\b(nfc|tap|chip|contactless)\b/); const nd = t.match(/(\d+(?:\.\d+)?)\s*mm\s*(?:nfc|chip|tag|pocket)/); if (nd) P.nfcD = +nd[1];
+  P.ring = P.product === "keychain" || has(/\b(key ?ring|ring hole|hole for)\b/) || /\bwith (a )?hole\b/.test(t); if (has(/\bno hole\b/)) P.ring = false;
+  P.lip = P.product === "coaster" || has(/\b(lip|raised edge|raised rim|rim)\b/); if (has(/\bno (lip|rim|raised edge)\b/)) P.lip = false;
+  const ang = t.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree)/); if (ang) P.angle = +ang[1];
+  const U = u => /^(cm)/.test(u) ? 10 : /^(in|inch|inches|")/.test(u) ? 25.4 : 1, num = "(\\d+(?:\\.\\d+)?)", unit = "\\s*(mm|cm|in(?:ch(?:es)?)?\\b|\")";
+  const th = t.match(new RegExp(num + unit + "\\s*(?:thick|thickness|deep|tall base)")); if (th) P.z = +th[1] * U(th[2]);
+  const two = t.match(new RegExp(num + "\\s*(?:mm|cm|in|\")?\\s*[x×by]+\\s*" + num + unit)); if (two) { const k = U(two[3]); P.x = +two[1] * k; P.y = +two[2] * k; }
+  if (!two) {
+    const re = new RegExp(num + unit + "\\s*(wide|width|across|tall|high|height|long)?", "g"); let m;
+    while ((m = re.exec(t))) { const v = +m[1] * U(m[2]), after = t.slice(m.index + m[0].length, m.index + m[0].length + 14); if (/^\s*(nfc|chip|tag|pocket|thick|deep)/.test(after) || (th && m.index === th.index)) continue;
+      if (/wide|width|across/.test(m[3] || "")) P.x = v; else if (/tall|high|height|long/.test(m[3] || "")) P.y = v; else if (P.size == null) P.size = v; }
+  }
+  for (const [name, hx] of FILAMENTS) if (new RegExp("\\b" + name.toLowerCase() + "\\b").test(t)) { P.color = [name, hx]; break; }
+  if (has(/\b(sphere|figurine|statue|bust|vase|cup|mug|bowl|3d model of|sculpt)/)) P.notes.push("Fully 3D, sculpted objects aren't something this builder makes; it makes flat and raised (2.5D) parts.");
+  return P;
+}
+function planFromDescription(P) {
+  const shape = P.shape === "square" ? "rect" : P.shape || (P.product === "coaster" || P.product === "keychain" ? "oval" : "rounded");
+  const ratio = { heart: 72 / 80, oval: 1, hexagon: 0.87, rect: P.shape === "square" ? 1 : 0.6, rounded: P.shape === "square" ? 1 : 0.6 }[shape] || 1;
+  const def = { stand: 100, keychain: 50, coaster: 99.98, plate: 80 }[P.product];
+  let x = P.x, y = P.y;
+  if (x == null && y == null) { const L = P.size || def; if (ratio <= 1) { x = L; y = L * ratio; } else { y = L; x = L / ratio; } if (P.product === "coaster" && !P.size && shape === "oval") { x = 99.98; y = 99.99; } }
+  else if (x == null) x = y / ratio; else if (y == null) y = x * ratio;
+  const z = P.z || { stand: 4, keychain: 4, coaster: 6, plate: 4 }[P.product];
+  const spec = { kind: "shape", shape, radius: shape === "rect" ? 0 : 6, margin: 2, fillHoles: true, ring: P.ring ? "top" : "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!P.lip, lipH: 2, lipW: 3, product: P.product === "coaster" ? "coaster" : "custom" };
+  if (P.nfc) spec.nfc = { on: true, d: P.nfcD || 26, h: 1.2, cover: 0.8, layer: 0.2, dx: 0, dy: 0 };
+  if (P.product === "stand") spec.stand = { on: true, angle: P.angle != null ? P.angle : 10, d: 40, h: 14, w: 0, slot: 9, clear: 0.35 };
+  return { spec, dims: { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) }, lock: shape === "oval" || shape === "heart" || shape === "hexagon" };
+}
+function describeSummary(P, plan) {
+  const sp = plan.spec, d = plan.dims, bits = [];
+  bits.push({ heart: "heart", oval: "circle", hexagon: "hexagon", rect: P.shape === "square" ? "square" : "rectangle", rounded: "rounded rectangle" }[sp.shape] + " " + { stand: "stand (part + base)", keychain: "keychain", coaster: "coaster", plate: "plate" }[P.product]);
+  bits.push(`${n1(d.x)} × ${n1(d.y)} × ${n1(d.z)} mm` + (sp.ring !== "none" ? " + key ring tab" : "") + (standStem(sp) ? " + stem for the slot" : ""));
+  if (sp.nfc) bits.push(`hidden ${sp.nfc.d} mm NFC pocket`); if (sp.lip) bits.push("2 mm raised edge"); if (sp.stand) bits.push(`base leaning back ${sp.stand.angle}°`);
+  if (P.color) bits.push(P.color[0].toLowerCase() + " filament"); if (P.text) bits.push(`text "${P.text}"`);
+  return bits;
+}
+$("descText").addEventListener("input", () => {
+  const v = $("descText").value.trim(), el = $("descParse"); if (!v) { el.className = "status"; el.textContent = ""; return; }
+  const P = parseDescription(v), plan = planFromDescription(P); el.className = "status";
+  if (P.notes.length) { el.className = "status err"; el.textContent = P.notes.join(" ") + " Try Import STL for a model made elsewhere, or AI assist."; return; }
+  el.innerHTML = "Will make: " + describeSummary(P, plan).map(b => `<b>${esc(b)}</b>`).join(" · ") + (P.notes.length ? "<br>" + esc(P.notes.join(" ")) : "");
+});
+$("descBtn").onclick = async () => {
+  const v = $("descText").value.trim(); if (!v) { $("descParse").textContent = "Describe the part first, e.g. heart shape NFC payment stand, 100 mm."; return; }
+  const P = parseDescription(v), plan = planFromDescription(P);
+  S.artImg = null; S.design = null; S.snap = null; S.refs = []; renderRefs(); $("ltText").value = P.text || ""; if (P.text) $("ltPos").value = "middle";
+  if (P.color) setFilament(P.color[1]);
+  if (P.notes.length) { $("descParse").className = "status err"; $("descParse").textContent = P.notes.join(" ") + " Try Import STL for a model made elsewhere, or AI assist."; return; }
+  plan.spec.descName = describeSummary(P, plan)[0].replace(/\s*\(.*\)/, "") + (plan.spec.nfc ? " nfc" : "");
+  if (plan.spec.ring !== "none" || standStem(plan.spec)) { try { const g = await tabGrowth(plan.spec, plan.dims.x, plan.dims.y); plan.dims.x = +(plan.dims.x + g[0]).toFixed(2); plan.dims.y = +(plan.dims.y + g[1]).toFixed(2); } catch (e) { console.error(e); } }
+  setMode("contain"); $("pRot").value = 0;
+  startModel(plan.spec, plan.dims, plan.lock, "x");
+};
 // Adding, moving or resizing the key ring tab on a plain shape keeps the shape itself the same size:
 // the tab is added on top of X/Y (which stay the overall size), so a 50 mm circle stays a 50 mm circle.
-async function tabGrowth(sp, W, H) { if (sp.ring === "none") return [0, 0]; const r = await bodyRaster(sp, W, H); return [r.bw - W, r.bh - H]; }
+async function tabGrowth(sp, W, H) { if (sp.ring === "none" && !standStem(sp)) return [0, 0]; const r = await bodyRaster(sp, W, H); return [r.bw - W, r.bh - H]; }
 async function keepBodySize(old, sp) {
   const d = S.dims, g0 = await tabGrowth(old, d.x, d.y), bw = Math.max(2, d.x - g0[0]), bh = Math.max(2, d.y - g0[1]), g1 = await tabGrowth(sp, bw, bh);
   const nx = +(bw + g1[0]).toFixed(2), ny = +(bh + g1[1]).toFixed(2);
@@ -3294,7 +3430,7 @@ $("aGen").onclick = aiSurfaceArt; $("aStop").onclick = () => aiCtl && aiCtl.abor
 // export
 $("fname").addEventListener("input", () => { S.nameEdited = !!$("fname").value.trim(); exportNotes(); });
 $("dpi").addEventListener("input", exportNotes);
-$("xStl").onclick = () => exportFile("stl"); $("xPng").onclick = () => exportFile("png"); $("xSvg").onclick = () => exportFile("svg"); $("xWhite").onclick = () => exportFile("white"); $("xTpl").onclick = () => exportFile("tplsvg"); $("xAll").onclick = () => exportFile("all");
+$("xStl").onclick = () => exportFile("stl"); $("xStand").onclick = () => exportFile("stand"); $("xPng").onclick = () => exportFile("png"); $("xSvg").onclick = () => exportFile("svg"); $("xWhite").onclick = () => exportFile("white"); $("xTpl").onclick = () => exportFile("tplsvg"); $("xAll").onclick = () => exportFile("all");
 $("tplSvg").onclick = () => exportFile("tplsvg", $("tplStatus")); $("tplPng").onclick = () => exportFile("tplpng", $("tplStatus"));
 $("saveBtn").onclick = saveCurrent;
 
