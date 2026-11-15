@@ -350,6 +350,13 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
       </div>
     </div>
     <div class="card" style="padding:12px 14px"><div class="specs" id="specs"></div></div>
+    <div class="card change" style="padding:12px 14px">
+      <label class="f" for="chgText">Change it · no credits
+        <textarea id="chgText" rows="2" placeholder='e.g. make it 80 mm wide and 5 mm thick, text "Mia" at the bottom in script, pink filament, add a key ring hole'></textarea>
+      </label>
+      <div class="btns"><button class="btn primary" id="chgBtn">Apply changes</button></div>
+      <p class="status" id="chgParse"></p>
+    </div>
   </div>
 
   <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize settings panel" tabindex="0"></div>
@@ -2185,6 +2192,89 @@ $("prCopy").onclick = async () => {
   try { await navigator.clipboard.writeText(txt); $("prStatus").textContent = "Quote copied."; } catch (e) { $("prStatus").textContent = txt; }
 };
 
+
+/* =========================================================
+   Change it (no credits): plain-language edits to the current part (STL or generated)
+   ========================================================= */
+const COLORS = { white: "#ffffff", black: "#111111", gray: "#8a8d91", grey: "#8a8d91", silver: "#c0c0c0", red: "#c8102e", orange: "#f07c1b", yellow: "#f5c400", gold: "#d4af37", green: "#2e8b3d", mint: "#98e2c6", teal: "#14857c", blue: "#1f5fbf", navy: "#1b2a5a", "light blue": "#7fc8ff", "sky blue": "#7fc8ff", cyan: "#00bcd4", purple: "#6b3fa0", lavender: "#b9a3e3", pink: "#f39bc1", "hot pink": "#ff3e9a", magenta: "#d81b8f", maroon: "#7a1f2b", brown: "#7b4a2a", beige: "#e8d8b8", cream: "#f6efdc", rose: "#e8a0b0" };
+const COLOR_RE = "(" + Object.keys(COLORS).sort((a, b) => b.length - a.length).join("|") + "|#[0-9a-f]{6})";
+const colorHex = c => c.startsWith("#") ? c : COLORS[c];
+const FONT_STYLES = { script: "Great Vibes", cursive: "Great Vibes", elegant: "Playfair Display", fancy: "Great Vibes", bold: "Montserrat", block: "Anton", handwritten: "Permanent Marker", marker: "Permanent Marker", fun: "Fredoka", bubbly: "Baloo 2", bubble: "Baloo 2", comic: "Bangers", tall: "Bebas Neue", condensed: "Bebas Neue", retro: "Righteous", military: "Black Ops One", stencil: "Black Ops One", playful: "Lobster", casual: "Dancing Script" };
+function parseChanges(raw) {
+  const t = " " + raw.toLowerCase().replace(/[“”]/g, '"').replace(/[’]/g, "'") + " ", A = [], has = re => re.test(t), q = raw.match(/["“]([^"”]*)["”]/);
+  const U = u => /^cm/.test(u) ? 10 : /^(in|inch|")/.test(u) ? 25.4 : 1, num = "(\\d+(?:\\.\\d+)?)", unit = "\\s*(mm|cm|in(?:ch(?:es)?)?\\b|\")", add = (label, fn, order) => A.push({ label, fn, order: order || 5 });
+  const isStl = S.spec && S.spec.kind === "stl", gen = S.spec && S.spec.kind !== "stl";
+  // ---- wording ----
+  if (q) add(`text "${q[1]}"`, () => { $("ltText").value = q[1].replace(/\s*\|\s*/g, "\n"); if ($("ltPos").value === "design" && !S.artImg) $("ltPos").value = "middle"; }, 6);
+  else if (has(/\b(remove|delete|no|clear|take off|take out)\b[^.]*\b(text|wording|words|lettering|name)\b/)) add("remove the text", () => { $("ltText").value = ""; }, 6);
+  const pos = t.match(/\b(text|wording|words|lettering|name)\b[^.]*\b(top|bottom|middle|center|centre)\b/); if (pos) { const v = pos[2] === "center" || pos[2] === "centre" ? "middle" : pos[2]; add(`text at the ${v}`, () => { $("ltPos").value = v; }, 6); }
+  for (const [f] of FONTS) if (t.includes(" " + f.toLowerCase())) { add(`font ${f}`, () => { $("ltFont").value = f; }, 6); break; }
+  if (!A.some(a => a.label.startsWith("font"))) for (const k in FONT_STYLES) if (new RegExp("\\b" + k + "\\b[^.]*\\b(font|text|lettering|letters|writing)\\b|\\b(font|text|lettering|letters|writing)\\b[^.]*\\b" + k + "\\b").test(t)) { const f = FONT_STYLES[k]; add(`${k} font (${f})`, () => { $("ltFont").value = f; }, 6); break; }
+  let m = t.match(new RegExp("\\b(text|letters|lettering|words|wording|font)\\s+(?:in\\s+|color\\s+|colour\\s+|to\\s+)?" + COLOR_RE)) || t.match(new RegExp(COLOR_RE + "\\s+(text|letters|lettering|words|wording|font|name(?!\\s*plate))\\b"));
+  if (m) { const c = /^(text|letters|lettering|words|wording|font|name)$/.test(m[1]) ? m[2] : m[1]; add(`${c} text`, () => { $("ltFg").value = colorHex(c); }, 6); }
+  if (has(/\b(no|remove|without)\s+(text\s+)?outline\b/)) add("no text outline", () => { $("ltOutlineW").value = 0; }, 6);
+  else if ((m = t.match(new RegExp(COLOR_RE + "\\s+outline\\b")))) add(`${m[1]} text outline`, () => { $("ltOutline").value = colorHex(m[1]); if (!(+$("ltOutlineW").value > 0)) $("ltOutlineW").value = 0.5; }, 6);
+  if ((m = t.match(new RegExp("\\braised\\s+(?:text|lettering|letters|name|words)(?:\\s+(?:by\\s+)?" + num + "\\s*mm)?")))) { const v = m[1] ? +m[1] : 0.6; add(`raised lettering ${v} mm`, () => { $("fRaise").value = v; }, 6); }
+  if (has(/\b(flat|not raised|unraised)\s+(text|lettering|letters)\b/)) add("flat lettering", () => { $("fRaise").value = 0; }, 6);
+  // ---- size ----
+  const two = t.match(new RegExp(num + "\\s*(?:mm|cm|in|\")?\\s*(?:x|×|by)\\s*" + num + unit));
+  if (two) { const k = U(two[3]), x = +two[1] * k, y = +two[2] * k; add(`size ${n1(x)} × ${n1(y)} mm`, () => { if (S.spec.kind !== "stl" && x / y !== S.dims.x / S.dims.y) setLock(false); setDim("x", x); if (S.lock) return; setDim("y", y); }, 3); }
+  const re = new RegExp(num + unit + "\\s*(wide|width|across|tall|high|height|long|thick|thickness|deep)", "g");
+  while ((m = re.exec(t))) { const v = +m[1] * U(m[2]), k = /wide|width|across/.test(m[3]) ? "x" : /thick|deep/.test(m[3]) ? "z" : "y", nm = { x: "width", y: "height", z: "thickness" }[k]; if (/\bnfc\b|\bchip\b|\bpocket\b/.test(t.slice(Math.max(0, m.index - 12), m.index))) continue; add(`${nm} ${n1(v)} mm`, () => setDim(k, v), k === "z" ? 4 : 3); }
+  if (!two && !A.some(a => /^(width|height) /.test(a.label))) { const s1 = t.match(new RegExp("\\b(?:make it|resize(?: it)?(?: to)?|scale(?: it)?(?: to)?|size)\\s+" + num + unit + "(?!\\s*(?:wide|width|across|tall|high|height|long|thick|deep))")); if (s1) { const v = +s1[1] * U(s1[2]); add(`largest side ${n1(v)} mm`, () => setDim(S.dims.x >= S.dims.y ? "x" : "y", v), 3); } }
+  const pct = t.match(/(\d+(?:\.\d+)?)\s*%\s*(bigger|larger|smaller)/), fac = pct ? (pct[2] === "smaller" ? 1 - pct[1] / 100 : 1 + pct[1] / 100) : has(/\b(twice as big|double the size|double size)\b/) ? 2 : has(/\bhalf the size\b/) ? 0.5 : null;
+  if (fac && fac > 0) add(`${fac > 1 ? "bigger" : "smaller"} ×${+fac.toFixed(3)}`, () => { const L = S.lock; setLock(true); setDim("x", +(S.dims.x * fac).toFixed(3)); if (!isStl && !L) setLock(L); }, 3);
+  // ---- shape & features (generated parts) ----
+  const shp = t.match(/\b(?:make it|turn it into|change (?:it|the shape) to|shape)\s+(?:a |an |into a )?(heart|circle|round|oval|square|rectangle|rounded rectangle|hexagon)\b/);
+  if (shp && gen) { const v = { heart: "heart", circle: "oval", round: "oval", oval: "oval", square: "rect", rectangle: "rect", "rounded rectangle": "rounded", hexagon: "hexagon" }[shp[1]]; add(`${shp[1]} shape`, async () => { $("mOutline").value = v; specFromControls(); setLock(false); if (shp[1] === "square" || shp[1] === "circle") setDim("y", S.dims.x); setLock(v === "oval" || v === "heart" || v === "hexagon"); }, 1); }
+  if (has(/\b(remove|no|without|take off)\b[^.]*\b(key ?ring|hole|loop)\b/) && gen) add("remove key ring hole", async () => { const old = { ...S.spec }; $("mRing").value = "none"; specFromControls(); await keepBodySize(old, S.spec); }, 2);
+  else if ((m = t.match(/\b(add|with|put)\b[^.]*\b(key ?ring|hole|loop)\b(?:[^.]*\b(top left|top right|top|left))?/)) && gen) { const v = (m[3] || "top").replace(" ", "-"); add(`key ring hole ${v.replace("-", " ")}`, async () => { const old = { ...S.spec }; $("mRing").value = v; specFromControls(); await keepBodySize(old, S.spec); }, 2); }
+  if (has(/\b(remove|no|without)\b[^.]*\b(lip|raised edge|rim)\b/) && gen) add("no raised edge", () => { $("mLip").checked = false; specFromControls(); }, 2);
+  else if (has(/\b(add|with|give it)\b[^.]*\b(lip|raised edge|rim)\b/) && gen) add("2 mm raised edge", () => { $("mLip").checked = true; specFromControls(); }, 2);
+  const nfcD = t.match(/(\d+(?:\.\d+)?)\s*mm\s*(?:nfc|chip)/);
+  if (has(/\b(remove|no|without)\b[^.]*\b(nfc|chip)\b/)) add("remove NFC pocket", () => { S.spec.nfc = { ...(S.spec.nfc || {}), on: false }; syncNfc(); }, 2);
+  else if (has(/\b(add|with|put|insert|hidden)\b[^.]*\b(nfc|chip)\b/) || nfcD) add(`hidden ${nfcD ? nfcD[1] : (S.spec && S.spec.nfc && S.spec.nfc.d) || 26} mm NFC pocket`, () => { S.spec.nfc = { d: 26, h: 1.2, cover: 0.8, layer: 0.2, dx: 0, dy: 0, ...(S.spec.nfc || {}), on: true, ...(nfcD ? { d: +nfcD[1] } : {}) }; syncNfc(); }, 2);
+  const lean = t.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree)/);
+  if (has(/\b(remove|no|without)\b[^.]*\b(stand|base)\b/)) add("remove stand base", async () => { const old = { ...S.spec }; S.spec.stand = { ...(S.spec.stand || {}), on: false }; syncNfc(); if (old.kind === "shape") await keepBodySize(old, S.spec); }, 2);
+  else if (has(/\b(stand|easel|holder|sign base|base that holds)\b/) && has(/\b(add|make|with|turn|into|give)\b/)) add(`stand base${lean ? ` leaning ${lean[1]}°` : ""}`, async () => { const old = { ...S.spec }; S.spec.stand = { on: true, angle: lean ? +lean[1] : 10, d: 40, h: 14, w: 0, slot: 9, clear: 0.35, ...(old.stand && old.stand.on ? old.stand : {}), ...(lean ? { angle: +lean[1] } : {}) }; syncNfc(); if (old.kind === "shape") await keepBodySize(old, S.spec); }, 2);
+  else if (lean && S.spec && S.spec.stand && S.spec.stand.on) add(`stand lean ${lean[1]}°`, () => { S.spec.stand = { ...S.spec.stand, angle: +lean[1] }; syncNfc(); }, 2);
+  // ---- style ----
+  if ((m = t.match(new RegExp("\\b(?:print (?:it )?in|in)\\s+" + COLOR_RE + "\\s+(?:filament|plastic|pla|base)\\b")) || t.match(new RegExp(COLOR_RE + "\\s+(?:filament|plastic|pla|base)\\b")) || t.match(new RegExp("\\b(?:filament|base|plastic)\\s+(?:color\\s+)?(?:to\\s+)?" + COLOR_RE)))) { const c = m[1], f = FILAMENTS.find(x => x[0].toLowerCase() === c || (c === "grey" && x[0] === "Gray")); add(`${c} filament`, () => setFilament(f ? f[1] : colorHex(c)), 7); }
+  if (has(/\b(no|remove|transparent|clear|without)\s+(background|bg)\b/) || has(/\blet the filament show\b/)) add("no background ink", () => { $("bgFill").value = "filament"; }, 6);
+  else if ((m = t.match(new RegExp("\\bgradient\\b[^.]*?" + COLOR_RE + "\\s+(?:to|and|into)\\s+" + COLOR_RE)))) { const a = m[1], b = m[2]; add(`gradient ${a} → ${b}`, () => { $("bgFill").value = "ink"; $("grad").checked = true; $("bg1").value = colorHex(a); $("bg2").value = colorHex(b); }, 6); }
+  else if ((m = t.match(new RegExp(COLOR_RE + "\\s+(?:background|bg)\\b")) || t.match(new RegExp("\\b(?:background|bg)\\s+(?:color\\s+)?(?:to\\s+)?" + COLOR_RE)))) { const c = m[1]; add(`${c} background`, () => { $("bgFill").value = "ink"; $("grad").checked = false; $("bg1").value = colorHex(c); }, 6); }
+  if (has(/\b(no|remove|without)\s+(border|edge band|band)\b/)) add("no edge band", () => { $("borderW").value = 0; }, 6);
+  else if ((m = t.match(new RegExp(COLOR_RE + "\\s+(?:border|edge band|edge|band)\\b(?:\\s+" + num + "\\s*mm)?")))) { const c = m[1], w = m[2] ? +m[2] : Math.max(1, +$("borderW").value || 0); add(`${c} edge band ${w} mm`, () => { $("border").value = colorHex(c); $("borderW").value = w; }, 6); }
+  if (has(/\b(layered |3d |raised )?relief\b/) && !has(/\b(no|remove|without)\s+relief\b/)) add("layered relief", () => { $("fStyle").value = "relief"; }, 6);
+  if (has(/\b(no relief|flat print|flat style|make it flat)\b/)) add("flat surface", () => { $("fStyle").value = "flat"; }, 6);
+  // ---- artwork placement ----
+  if (has(/\b(fill|cover)\b[^.]*\b(face|surface|whole|entire|edge to edge|all the way)\b/) || has(/\bedge to edge\b/)) add("image fills the face", () => setMode("cover"), 8);
+  else if (has(/\b(show all|whole image|fit inside|show the whole|don't crop|no crop)\b/)) add("show the whole image", () => setMode("contain"), 8);
+  if (has(/\bcover\b[^.]*\btab\b|\bover the (key ?ring|loop|tab)\b/)) add("image covers the key ring tab", () => { $("pTab").checked = true; setMode("cover"); }, 8);
+  if ((m = t.match(/\brotate\b[^.]*\b(image|art|artwork|picture|photo|design)?\b[^.]*?\b(90|180|270)\b/))) { const v = m[2]; add(`rotate image ${v}°`, () => { $("pRot").value = v; S.snapRot = false; if (getMode() === "snap") setMode("contain"); }, 8); }
+  const mv = /\bmove\b[^.]*\b(image|art|artwork|picture|photo|design|it)\b[^.]*\b(left|right|up|down)\b(?:[^.]*?(\d+(?:\.\d+)?)\s*mm)?/; if ((m = t.match(mv))) { const d = m[3] ? +m[3] : 1, k = m[2]; add(`move image ${k} ${d} mm`, () => { if (k === "left" || k === "right") $("pOx").value = +((+$("pOx").value || 0) + (k === "right" ? d : -d)).toFixed(2); else $("pOy").value = +((+$("pOy").value || 0) + (k === "down" ? d : -d)).toFixed(2); }, 8); }
+  if ((m = t.match(new RegExp("\\b(?:image|art|artwork|picture|photo|design)\\s+(?:width\\s+)?" + num + unit + "\\s*(?:wide)?")))) { const v = +m[1] * U(m[2]); add(`image ${n1(v)} mm wide`, () => { S.keepW = v; setMode("keep"); }, 8); }
+  if (has(/\b(print|put it|image|art)\b[^.]*\b(on the )?bottom( face| side)?\b/) && has(/\bbottom\b/) && !pos) add("print on the bottom face", () => useFace("bottom"), 9);
+  else if (has(/\b(print|put it|image|art)\b[^.]*\bon the top( face)?\b/)) add("print on the top face", () => useFace("top"), 9);
+  return A.sort((a, b) => a.order - b.order);
+}
+function changePreview() {
+  const v = $("chgText").value.trim(), el = $("chgParse"); if (!v) { el.className = "status"; el.textContent = ""; return []; }
+  if (!S.spec) { el.className = "status err"; el.textContent = "Make or import a part first."; return []; }
+  const A = parseChanges(v); el.className = A.length ? "status" : "status err";
+  el.innerHTML = A.length ? "Will change: " + A.map(a => `<b>${esc(a.label)}</b>`).join(" · ") : "I didn't find a change I can make. Try sizes (80 mm wide, 20% bigger, 5 mm thick), \"new text\", text at the top, script font, white text, pink filament, blue background, add a key ring hole, add NFC, make it a stand, fill the face, rotate the image 90.";
+  return A;
+}
+$("chgText").addEventListener("input", changePreview);
+$("chgText").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $("chgBtn").click(); } });
+$("chgBtn").onclick = async () => {
+  const A = changePreview(); if (!A.length) return;
+  for (const a of A) { try { await a.fn(); } catch (e) { console.error(e); } }
+  S.snap = null; updateInfo(); scheduleGeo(true);
+  $("chgParse").className = "status ok"; $("chgParse").innerHTML = "Changed: " + A.map(a => `<b>${esc(a.label)}</b>`).join(" · ") + ". Undo (↶) puts it back.";
+  $("chgText").value = "";
+};
+
 /* =========================================================
    Inspect: standard views, section cut, X-ray, edges, 2-point measure
    ========================================================= */
@@ -2431,7 +2521,7 @@ function syncModelControls() {
   $("mLip").checked = !!sp.lip; $("mLipH").value = sp.lipH || 2; $("mLipW").value = sp.lipW || 3;
 }
 function startModel(spec, dims, lock, driver, viaOutline) {
-  H.stack = []; H.idx = -1; histButtons(); S.base = null; S.surf = null; S.lastPreview = null; S.spec = spec; S.dims = { ...dims }; S.dims0 = { ...dims }; S.lock = lock; S.driver = driver || "x"; S.surfSel = "top"; S.keepW = 0;
+  histButtons(); S.base = null; S.surf = null; S.lastPreview = null; S.spec = spec; S.dims = { ...dims }; S.dims0 = { ...dims }; S.lock = lock; S.driver = driver || "x"; S.surfSel = "top"; S.keepW = 0;
   S.rot = { x: 0, y: 0, z: 0 }; const P = PRINTERS[$("printer").value]; S.pos = { x: P[0] / 2, y: P[1] / 2, z: 0 };
   $("pOx").value = 0; $("pOy").value = 0; S.nameEdited = false;
   setLock(lock); syncModelControls();
@@ -3339,8 +3429,8 @@ async function openSaved(it) {
    undo / redo (whole-project snapshots)
    ========================================================= */
 const H = { stack: [], idx: -1, lock: false, timer: null };
-function snapNow() { return { spec: S.spec && { ...S.spec }, dims: { ...S.dims }, lock: S.lock, driver: S.driver, pos: { ...S.pos }, rot: { ...S.rot }, surfSel: S.surfSel, keepW: S.keepW, keepH: S.keepH, filament: S.filament, controls: controlState(), art: S.artImg, edits: S.artImg ? S.artImg.edits.slice() : null }; }
-function snapKey(s) { const { art, edits, ...rest } = s; return JSON.stringify(rest) + (art ? art.label + "|" + art.bgMode + art.tol + art.smooth + art.holes + art.speck + "|" + rle(edits) : ""); }
+function snapNow() { return { stl: S.spec && S.spec.kind === "stl" ? S.stl : null, spec: S.spec && { ...S.spec }, dims: { ...S.dims }, lock: S.lock, driver: S.driver, pos: { ...S.pos }, rot: { ...S.rot }, surfSel: S.surfSel, keepW: S.keepW, keepH: S.keepH, filament: S.filament, controls: controlState(), art: S.artImg, edits: S.artImg ? S.artImg.edits.slice() : null }; }
+function snapKey(s) { const { art, edits, stl, ...rest } = s; return JSON.stringify(rest) + (stl ? "|stl:" + stl.name + ":" + stl.tris.length : "") + (art ? art.label + "|" + art.bgMode + art.tol + art.smooth + art.holes + art.speck + "|" + rle(edits) : ""); }
 function histPush() {
   if (H.lock || !S.spec) return; clearTimeout(H.timer);
   H.timer = setTimeout(() => { if (H.lock) return; const s = snapNow(), key = snapKey(s); if (H.stack[H.idx] && H.stack[H.idx].key === key) return; H.stack = H.stack.slice(0, H.idx + 1); H.stack.push({ s, key }); if (H.stack.length > 60) H.stack.shift(); H.idx = H.stack.length - 1; histButtons(); scheduleCheckpoint(); }, 400);
@@ -3350,7 +3440,7 @@ function histApply(s) {
   H.lock = true; clearTimeout(H.timer);
   for (const [id, v] of Object.entries(s.controls)) if ($(id) && id !== "mode" && id !== "grad") $(id).value = v;
   $("grad").checked = !!s.controls.grad; $("pTab").checked = !!s.controls.tab; setMode(s.controls.mode || "cover"); setFilament(s.filament);
-  S.spec = { ...s.spec }; S.dims = { ...s.dims }; setLock(s.lock); S.driver = s.driver; S.pos = { ...s.pos }; S.rot = { ...s.rot }; S.surfSel = s.surfSel; S.keepW = s.keepW; S.keepH = s.keepH;
+  if (s.stl) S.stl = s.stl; S.spec = { ...s.spec }; S.dims = { ...s.dims }; setLock(s.lock); S.driver = s.driver; S.pos = { ...s.pos }; S.rot = { ...s.rot }; S.surfSel = s.surfSel; S.keepW = s.keepW; S.keepH = s.keepH;
   S.artImg = s.art; if (s.art && s.edits) { s.art.edits = s.edits.slice(); rebuildMask(s.art); }
   S.snap = null; syncModelControls(); writeDims(); histButtons();
   rebuild().finally(() => { setTimeout(() => { H.lock = false; }, 450); });
@@ -3423,7 +3513,7 @@ const done = new Set();
 function markDone(s) { done.add(s); }
 function go(step) {
   if (step !== "model" && step !== "saved" && !S.spec) step = "model";
-  S.step = step;
+  S.step = step; const chg = document.querySelector(".change"); if (chg) chg.classList.toggle("hidden", step === "outline");
   $("scr-model").classList.toggle("hidden", step !== "model");
   $("scr-saved").classList.toggle("hidden", step !== "saved");
   $("scr-work").classList.toggle("hidden", step === "model" || step === "saved");
@@ -3559,6 +3649,7 @@ async function importStlFile(f) {
 // dimensions
 function setDim(k, v) {
   if (!(v > 0) || !S.spec) return;
+  if (S.lock && k !== "z" && S.spec.kind === "shape" && (S.spec.ring !== "none" || standStem(S.spec))) return setDimKeepTab(k, v);
   const old = { ...S.dims };
   S.dims[k] = v;
   if (S.lock) {
@@ -3621,9 +3712,9 @@ function parseDescription(raw) {
   const t = " " + raw.toLowerCase().replace(/[“”]/g, '"').replace(/[’]/g, "'") + " ", P = { notes: [] }, has = re => re.test(t);
   const q = raw.match(/["“]([^"”]+)["”]/); if (q) P.text = q[1].trim();
   P.shape = has(/\bheart/) ? "heart" : has(/\b(circle|circular|round|disc|disk)\b/) ? "oval" : has(/\boval\b/) ? "oval" : has(/\bhex(agon)?\b/) ? "hexagon" : has(/\bsquare\b/) ? "square" : has(/\brounded\b/) ? "rounded" : has(/\b(rectangle|rectangular|rect)\b/) ? "rect" : null;
-  P.product = has(/\b(stand|sign|display|easel|holder|upright|payment|tap to pay|menu)\b/) ? "stand" : has(/\b(keychain|key chain|keyring|key ring tag|bag tag)\b/) ? "keychain" : has(/\bcoaster/) ? "coaster" : "plate";
+  P.product = has(/\b(wall|door|hanging)\s+(sign|plaque)\b/) ? "hanging" : has(/\b(stand|sign|display|easel|holder|upright|payment|tap to pay|menu|plaque)\b/) ? "stand" : has(/\b(keychain|key chain|keyring|key ring tag)\b/) ? "keychain" : has(/\b(bag tag|luggage tag|backpack tag)\b/) ? "bagtag" : has(/\bornament\b/) ? "ornament" : has(/\bmagnet\b/) ? "magnet" : has(/\b(name ?plate|desk sign|desk name)\b/) ? "nameplate" : has(/\bcoaster/) ? "coaster" : "plate";
   P.nfc = has(/\b(nfc|tap|chip|contactless)\b/); const nd = t.match(/(\d+(?:\.\d+)?)\s*mm\s*(?:nfc|chip|tag|pocket)/); if (nd) P.nfcD = +nd[1];
-  P.ring = P.product === "keychain" || has(/\b(key ?ring|ring hole|hole for)\b/) || /\bwith (a )?hole\b/.test(t); if (has(/\bno hole\b/)) P.ring = false;
+  P.ring = ["keychain", "bagtag", "ornament", "hanging"].includes(P.product) || has(/\b(key ?ring|ring hole|hole for)\b/) || /\bwith (a )?hole\b/.test(t); if (has(/\bno hole\b/)) P.ring = false;
   P.lip = P.product === "coaster" || has(/\b(lip|raised edge|raised rim|rim)\b/); if (has(/\bno (lip|rim|raised edge)\b/)) P.lip = false;
   const ang = t.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree)/); if (ang) P.angle = +ang[1];
   const U = u => /^(cm)/.test(u) ? 10 : /^(in|inch|inches|")/.test(u) ? 25.4 : 1, num = "(\\d+(?:\\.\\d+)?)", unit = "\\s*(mm|cm|in(?:ch(?:es)?)?\\b|\")";
@@ -3631,21 +3722,23 @@ function parseDescription(raw) {
   const two = t.match(new RegExp(num + "\\s*(?:mm|cm|in|\")?\\s*[x×by]+\\s*" + num + unit)); if (two) { const k = U(two[3]); P.x = +two[1] * k; P.y = +two[2] * k; }
   if (!two) {
     const re = new RegExp(num + unit + "\\s*(wide|width|across|tall|high|height|long)?", "g"); let m;
-    while ((m = re.exec(t))) { const v = +m[1] * U(m[2]), after = t.slice(m.index + m[0].length, m.index + m[0].length + 14); if (/^\s*(nfc|chip|tag|pocket|thick|deep)/.test(after) || (th && m.index === th.index)) continue;
+    while ((m = re.exec(t))) { const v = +m[1] * U(m[2]), after = t.slice(m.index + m[0].length, m.index + m[0].length + 14), before = t.slice(Math.max(0, m.index - 24), m.index); if (/^\s*(nfc|chip|tag|pocket|thick|deep|raised|border|band|outline|margin|lip|hole)/.test(after) || /(raised|letters|lettering|text|outline|border|band|edge|lip|hole|by|move \w+ \w+)\s*$/.test(before) || (th && m.index === th.index)) continue;
       if (/wide|width|across/.test(m[3] || "")) P.x = v; else if (/tall|high|height|long/.test(m[3] || "")) P.y = v; else if (P.size == null) P.size = v; }
   }
-  for (const [name, hx] of FILAMENTS) if (new RegExp("\\b" + name.toLowerCase() + "\\b").test(t)) { P.color = [name, hx]; break; }
+  // filament color: a color word that isn't describing the text, background, outline or border
+  { const cm = [...t.matchAll(/\b(white|black|gray|grey|red|orange|yellow|green|blue|purple|pink)\b(?!\s+(text|letters|lettering|words|font|name(?!\s*plate)|background|bg|outline|border|edge|band|gradient|to|and))/g)].filter(x => !/(gradient|background|text|from|to)\s*$/.test(t.slice(Math.max(0, x.index - 12), x.index)));
+    if (cm.length) { const w = cm[0][1] === "grey" ? "gray" : cm[0][1], f = FILAMENTS.find(x => x[0].toLowerCase() === w); if (f) P.color = [f[0], f[1]]; } }
   if (has(/\b(sphere|figurine|statue|bust|vase|cup|mug|bowl|3d model of|sculpt)/)) P.notes.push("Fully 3D, sculpted objects aren't something this builder makes; it makes flat and raised (2.5D) parts.");
   return P;
 }
 function planFromDescription(P) {
-  const shape = P.shape === "square" ? "rect" : P.shape || (P.product === "coaster" || P.product === "keychain" ? "oval" : "rounded");
-  const ratio = { heart: 72 / 80, oval: 1, hexagon: 0.87, rect: P.shape === "square" ? 1 : 0.6, rounded: P.shape === "square" ? 1 : 0.6 }[shape] || 1;
-  const def = { stand: 100, keychain: 50, coaster: 99.98, plate: 80 }[P.product];
+  const shape = P.shape === "square" ? "rect" : P.shape || (["coaster", "keychain", "ornament"].includes(P.product) ? "oval" : "rounded");
+  const ratio = P.product === "nameplate" && !P.shape ? 35 / 120 : P.product === "bagtag" && !P.shape ? 76 / 55 : { heart: 72 / 80, oval: 1, hexagon: 0.87, rect: P.shape === "square" ? 1 : 0.6, rounded: P.shape === "square" ? 1 : 0.6 }[shape] || 1;
+  const def = { stand: 100, keychain: 50, coaster: 99.98, plate: 80, hanging: 150, bagtag: 76, ornament: 75, magnet: 60, nameplate: 120 }[P.product];
   let x = P.x, y = P.y;
   if (x == null && y == null) { const L = P.size || def; if (ratio <= 1) { x = L; y = L * ratio; } else { y = L; x = L / ratio; } if (P.product === "coaster" && !P.size && shape === "oval") { x = 99.98; y = 99.99; } }
   else if (x == null) x = y / ratio; else if (y == null) y = x * ratio;
-  const z = P.z || { stand: 4, keychain: 4, coaster: 6, plate: 4 }[P.product];
+  const z = P.z || { stand: 4, keychain: 4, coaster: 6, plate: 4, hanging: 4, bagtag: 3.5, ornament: 3, magnet: 3, nameplate: 4 }[P.product];
   const spec = { kind: "shape", shape, radius: shape === "rect" ? 0 : 6, margin: 2, fillHoles: true, ring: P.ring ? "top" : "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!P.lip, lipH: 2, lipW: 3, product: P.product === "coaster" ? "coaster" : "custom" };
   if (P.nfc) spec.nfc = { on: true, d: P.nfcD || 26, h: 1.2, cover: 0.8, layer: 0.2, dx: 0, dy: 0 };
   if (P.product === "stand") spec.stand = { on: true, angle: P.angle != null ? P.angle : 10, d: 40, h: 14, w: 0, slot: 9, clear: 0.35 };
@@ -3653,8 +3746,9 @@ function planFromDescription(P) {
 }
 function describeSummary(P, plan) {
   const sp = plan.spec, d = plan.dims, bits = [];
-  bits.push({ heart: "heart", oval: "circle", hexagon: "hexagon", rect: P.shape === "square" ? "square" : "rectangle", rounded: "rounded rectangle" }[sp.shape] + " " + { stand: "stand (part + base)", keychain: "keychain", coaster: "coaster", plate: "plate" }[P.product]);
-  bits.push(`${n1(d.x)} × ${n1(d.y)} × ${n1(d.z)} mm` + (sp.ring !== "none" ? " + key ring tab" : "") + (standStem(sp) ? " + stem for the slot" : ""));
+  if (S.refs && S.refs.length && !P.shape && P.product !== "coaster" && P.product !== "stand") bits.push(`${P.product} shaped like your image`); else bits.push({ heart: "heart", oval: "circle", hexagon: "hexagon", rect: P.shape === "square" ? "square" : "rectangle", rounded: "rounded rectangle" }[sp.shape] + " " + { stand: "stand (part + base)", keychain: "keychain", coaster: "coaster", plate: "plate", hanging: "hanging sign", bagtag: "bag tag", ornament: "ornament", magnet: "magnet", nameplate: "name plate" }[P.product]);
+  const imgOutline = S.refs && S.refs.length && !P.shape && P.product !== "coaster" && P.product !== "stand";
+  bits.push((imgOutline ? `${n1(Math.max(d.x, d.y))} mm across (height follows your image) × ${n1(d.z)} mm thick` : `${n1(d.x)} × ${n1(d.y)} × ${n1(d.z)} mm`) + (sp.ring !== "none" ? " + key ring tab" : "") + (standStem(sp) ? " + stem for the slot" : ""));
   if (sp.nfc) bits.push(`hidden ${sp.nfc.d} mm NFC pocket`); if (sp.lip) bits.push("2 mm raised edge"); if (sp.stand) bits.push(`base leaning back ${sp.stand.angle}°`);
   if (P.color) bits.push(P.color[0].toLowerCase() + " filament"); if (P.text) bits.push(`text "${P.text}"`);
   return bits;
@@ -3663,19 +3757,38 @@ $("descText").addEventListener("input", () => {
   const v = $("descText").value.trim(), el = $("descParse"); if (!v) { el.className = "status"; el.textContent = ""; return; }
   const P = parseDescription(v), plan = planFromDescription(P); el.className = "status";
   if (P.notes.length) { el.className = "status err"; el.textContent = P.notes.join(" ") + " Try Import STL for a model made elsewhere, or AI assist."; return; }
-  el.innerHTML = "Will make: " + describeSummary(P, plan).map(b => `<b>${esc(b)}</b>`).join(" · ") + (P.notes.length ? "<br>" + esc(P.notes.join(" ")) : "");
+  const styl = parseChanges(v).filter(a => a.order >= 6 && !/^text "/.test(a.label) && !/filament$/.test(a.label)).map(a => a.label);
+  el.innerHTML = "Will make: " + [...describeSummary(P, plan), ...styl].map(b => `<b>${esc(b)}</b>`).join(" · ") + (S.refs.length ? ` · <b>with your image${!P.shape && P.product !== "coaster" && P.product !== "stand" ? " (the outline follows it)" : ""}</b>` : "") + (P.notes.length ? "<br>" + esc(P.notes.join(" ")) : "");
 });
 $("descBtn").onclick = async () => {
   const v = $("descText").value.trim(); if (!v) { $("descParse").textContent = "Describe the part first, e.g. heart shape NFC payment stand, 100 mm."; return; }
   const P = parseDescription(v), plan = planFromDescription(P);
-  S.artImg = null; S.design = null; S.snap = null; S.refs = []; renderRefs(); $("ltText").value = P.text || ""; if (P.text) $("ltPos").value = "middle";
+  const ref = S.refs[0] || null; S.design = null; S.snap = null; S.artImg = null; $("ltText").value = P.text || ""; if (P.text) $("ltPos").value = ref ? "bottom" : "middle";
+  if (ref) {
+    try { const im = await fileToImage(ref.file), src = toCanvas(im, 2400); S.artImg = prepareArt(src, "auto", 18, null, ref.file.name.replace(/\.[^.]+$/, ""), im.naturalWidth); }
+    catch (e) { $("descParse").className = "status err"; $("descParse").textContent = e.message; return; }
+    if (!P.shape && P.product !== "coaster" && P.product !== "stand") { // no shape named: the part follows the image's outline
+      const asp = S.artImg.h / S.artImg.w; plan.spec.kind = "cutout"; plan.spec.margin = 1.5; plan.spec.fillHoles = true; plan.lock = true;
+      if (!(P.x || P.y)) { const L = P.size || { keychain: 55, plate: 80 }[P.product] || 60; if (asp <= 1) { plan.dims.x = L; plan.dims.y = +(L * asp).toFixed(2); } else { plan.dims.y = L; plan.dims.x = +(L / asp).toFixed(2); } }
+      plan.spec.descName = (S.artImg.label || "image") + " " + P.product;
+    }
+  }
   if (P.color) setFilament(P.color[1]);
   if (P.notes.length) { $("descParse").className = "status err"; $("descParse").textContent = P.notes.join(" ") + " Try Import STL for a model made elsewhere, or AI assist."; return; }
   plan.spec.descName = describeSummary(P, plan)[0].replace(/\s*\(.*\)/, "") + (plan.spec.nfc ? " nfc" : "");
-  if (plan.spec.ring !== "none" || standStem(plan.spec)) { try { const g = await tabGrowth(plan.spec, plan.dims.x, plan.dims.y); plan.dims.x = +(plan.dims.x + g[0]).toFixed(2); plan.dims.y = +(plan.dims.y + g[1]).toFixed(2); } catch (e) { console.error(e); } }
-  setMode("contain"); $("pRot").value = 0;
-  startModel(plan.spec, plan.dims, plan.lock, "x");
+  if (plan.spec.kind === "shape" && (plan.spec.ring !== "none" || standStem(plan.spec))) { try { const g = await tabGrowth(plan.spec, plan.dims.x, plan.dims.y); plan.dims.x = +(plan.dims.x + g[0]).toFixed(2); plan.dims.y = +(plan.dims.y + g[1]).toFixed(2); } catch (e) { console.error(e); } }
+  setMode(S.artImg && plan.spec.kind === "cutout" ? "cover" : "contain"); $("pRot").value = 0; $("pTab").checked = false;
+  startModel(plan.spec, plan.dims, plan.lock, plan.spec.kind === "cutout" && plan.dims.y > plan.dims.x ? "y" : "x", !!S.artImg);
+  const styl = parseChanges(v).filter(a => a.order >= 6 && !/^text "/.test(a.label) && !/filament$/.test(a.label));
+  for (const a of styl) { try { await a.fn(); } catch (e) { console.error(e); } }
+  if (styl.length) { updateInfo(); scheduleArt(); }
 };
+// Proportional resize of a shape with a key ring tab / stand stem: scale the shape itself, keep the tab its real size
+async function setDimKeepTab(k, v) {
+  const sp = S.spec, d = S.dims, g0 = await tabGrowth(sp, d.x, d.y), bw = Math.max(1, d.x - g0[0]), bh = Math.max(1, d.y - g0[1]), asp = bh / bw;
+  let nw, nh; if (k === "x") { nw = Math.max(2, v - g0[0]); nh = nw * asp; } else { nh = Math.max(2, v - g0[1]); nw = nh / asp; }
+  const g1 = await tabGrowth(sp, nw, nh); d.x = +(nw + g1[0]).toFixed(3); d.y = +(nh + g1[1]).toFixed(3); S.driver = k; writeDims(); scheduleGeo();
+}
 // Adding, moving or resizing the key ring tab on a plain shape keeps the shape itself the same size:
 // the tab is added on top of X/Y (which stay the overall size), so a 50 mm circle stays a 50 mm circle.
 async function tabGrowth(sp, W, H) { if (sp.ring === "none" && !standStem(sp)) return [0, 0]; const r = await bodyRaster(sp, W, H); return [r.bw - W, r.bh - H]; }
