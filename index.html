@@ -1573,6 +1573,14 @@ function polysLoops(polys) { const o = []; for (const p of polys || []) o.push(p
 /* =========================================================
    artwork layer + PerfectFit placement
    ========================================================= */
+// When a photo is enlarged to fill the part, keep the lettering inside the part's visible print area (not the photo's cropped edges)
+function fitLettering() {
+  const a = S.art, p = S.pl, sf = S.surf; if (!a || !a.L || !a.img || a.bound || !p || !sf || (p.rot || 0) % 360 !== 0 || !["cover", "keep", "snap"].includes(p.mode)) return;
+  const o = placementOpts(), vis = containBox(sf, { ...o, inset: Math.max(o.inset, 1) }), k = p.k, ky = k * (p.ky || 1);
+  const x0 = (vis.x - p.cx) / k + a.aw0 / 2, y0 = (vis.y - p.cy) / ky + a.ah0 / 2, x1 = (vis.x + vis.w - p.cx) / k + a.aw0 / 2, y1 = (vis.y + vis.h - p.cy) / ky + a.ah0 / 2;
+  const r = { x: Math.max(0, x0), y: Math.max(0, y0), w: Math.min(a.aw0, x1) - Math.max(0, x0), h: Math.min(a.ah0, y1) - Math.max(0, y0) };
+  if (r.w > 1 && r.h > 1) a.L = { ...a.L, box: lbox(r, null, a.L.pos === "design" ? "bottom" : a.L.pos) };
+}
 function lbox(rect, tb, pos) {
   const P = { top: { x: .08, y: .05, w: .84, h: .25 }, middle: { x: .08, y: .375, w: .84, h: .25 }, bottom: { x: .08, y: .7, w: .84, h: .25 } };
   const b = pos === "design" && tb ? tb : (P[pos] || P.middle);
@@ -2097,7 +2105,7 @@ async function batchExport(jigOnly) {
   const ctl = new AbortController(); S.exporting = ctl; $("xCancel").classList.remove("hidden"); st.className = "status"; st.textContent = "Building the batch…";
   const stamp = stampNow(), base = exportName().name, files = [], ppi = +$("dpi").value, cal = calib(), bleed = +$("bleed").value || 0;
   const keep = { text: $("ltText").value }, perItemText = pl.names.length > 0, perItemGeo = perItemText && ($("fStyle").value === "relief" || (+$("fRaise").value || 0) > 0);
-  const setItem = i => { if (!perItemText) return; $("ltText").value = pl.names[i] || ""; S.art = getArt(); S.pl = computePlacement(); };
+  const setItem = i => { if (!perItemText) return; $("ltText").value = pl.names[i] || ""; S.art = getArt(); S.pl = computePlacement(); fitLettering(); };
   const tick = () => new Promise(r => setTimeout(r, 0)), checkAbort = () => { if (ctl.signal.aborted) throw new UserError("Batch cancelled. Nothing was saved and your project is unchanged."); };
   try {
     await ensureFont($("ltFont").value); await checkpoint("before batch");
@@ -2411,7 +2419,7 @@ async function rebuild() {
 }
 function refreshArt() {
   if (!S.base || !S.surf) return;
-  S.art = getArt(); S.pl = computePlacement();
+  S.art = getArt(); S.pl = computePlacement(); fitLettering();
   S.feat = buildFeatures();
   S.fit = S.pl && S.pl.mode === "snap" ? fitOverlay() : null;
   snapStatus();
@@ -3571,7 +3579,9 @@ function renderRefs() {
   const row = $("refRow"); row.innerHTML = "";
   S.refs.forEach((r, i) => { const d = document.createElement("div"); d.className = "ref"; d.innerHTML = `<img alt="Reference ${i + 1}" src="${r.url}"><button aria-label="Remove reference ${i + 1}">×</button>`; d.querySelector("button").onclick = e => { e.stopPropagation(); URL.revokeObjectURL(r.url); S.refs.splice(i, 1); renderRefs(); }; row.appendChild(d); });
   $("asisBtn").disabled = !S.refs.length;
+  if ($("descText").value.trim()) $("descText").dispatchEvent(new Event("input"));
 }
+function hasTransparency(c) { try { const g = c.getContext("2d", { willReadFrequently: true }), w = c.width, h = c.height, d = g.getImageData(0, 0, w, h).data; let t = 0, n = 0; for (let i = 3; i < d.length; i += 4 * 97) { n++; if (d[i] < 250) t++; } return t / n > 0.02; } catch (e) { return false; } }
 function addRefs(files) { for (const f of files) { if (!/^image\//.test(f.type) || S.refs.length >= 5) continue; S.refs.push({ file: f, url: URL.createObjectURL(f) }); } renderRefs(); }
 $("upZone").onclick = () => $("upFile").click();
 $("stlBtn").title = "Tip: upload the image first, then import the STL made from it, and the artwork snaps to the model's outline.";
@@ -3777,8 +3787,13 @@ $("descBtn").onclick = async () => {
   if (P.notes.length) { $("descParse").className = "status err"; $("descParse").textContent = P.notes.join(" ") + " Try Import STL for a model made elsewhere, or AI assist."; return; }
   plan.spec.descName = describeSummary(P, plan)[0].replace(/\s*\(.*\)/, "") + (plan.spec.nfc ? " nfc" : "");
   if (plan.spec.kind === "shape" && (plan.spec.ring !== "none" || standStem(plan.spec))) { try { const g = await tabGrowth(plan.spec, plan.dims.x, plan.dims.y); plan.dims.x = +(plan.dims.x + g[0]).toFixed(2); plan.dims.y = +(plan.dims.y + g[1]).toFixed(2); } catch (e) { console.error(e); } }
-  setMode(S.artImg && plan.spec.kind === "cutout" ? "cover" : "contain"); $("pRot").value = 0; $("pTab").checked = false;
-  startModel(plan.spec, plan.dims, plan.lock, plan.spec.kind === "cutout" && plan.dims.y > plan.dims.x ? "y" : "x", !!S.artImg);
+  // photos (no see-through background) fill the shape; logos/stickers with a transparent background sit inside it
+  const photo = S.artImg && !hasTransparency(S.artImg.src);
+  if (S.artImg && plan.spec.kind === "shape" && photo) S.artImg = prepareArt(S.artImg.src, "keep", 18, null, S.artImg.label, S.artImg.src.width * (S.artImg.pxPerSrc || 1));
+  setMode(S.artImg && (plan.spec.kind === "cutout" || photo) ? "cover" : "contain"); $("pRot").value = 0; $("pTab").checked = false;
+  const outline = !!S.artImg && plan.spec.kind === "cutout"; // the outline only needs checking when the 3D shape follows the picture
+  startModel(plan.spec, plan.dims, plan.lock, plan.spec.kind === "cutout" && plan.dims.y > plan.dims.x ? "y" : "x", outline);
+  if (outline) S.outlineReturn = "preview"; else if (S.artImg) { markDone("measure"); markDone("design"); go("preview"); setView("3d"); }
   const styl = parseChanges(v).filter(a => a.order >= 6 && !/^text "/.test(a.label) && !/filament$/.test(a.label));
   for (const a of styl) { try { await a.fn(); } catch (e) { console.error(e); } }
   if (styl.length) { updateInfo(); scheduleArt(); }
