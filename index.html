@@ -2430,7 +2430,7 @@ function scheduleGeo(now) { clearTimeout(geoTimer); geoTimer = setTimeout(rebuil
 function scheduleArt() { clearTimeout(artTimer); artTimer = setTimeout(() => refreshArt(), 120); }
 async function rebuild() {
   if (!S.spec) return;
-  const id = ++genId; busy(true);
+  const id = ++genId; busy(true); const t0 = performance.now();
   try {
     await ensureFont($("ltFont").value);
     const base = await genBase(); if (id !== genId) return;
@@ -2441,7 +2441,7 @@ async function rebuild() {
     S.base = base;
     S.adj = base.kind === "stl" && !base.pocket ? (S.stl.adj || (S.stl.adj = buildAdj(S.stl.tris))) : buildAdj(base.tris);
     selectSurface(S.surfSel);
-    writeDims(); refreshArt(true); showMsg("");
+    writeDims(); refreshArt(true); showMsg(""); S.buildMs = performance.now() - t0; updateInfo();
   } catch (e) { if (id !== genId) return; console.error(e); showMsg(e instanceof UserError ? e.message : "Something went wrong building the model: " + e.message); }
   finally { if (id === genId) busy(false); }
 }
@@ -2480,6 +2480,7 @@ function updateInfo() {
   if (!S.base) { $("specs").innerHTML = ""; return; }
   const tri = allTris().length / 9;
   let html = `<div><b>Model X × Y × Z</b>${fmtU(S.dims.x)} × ${fmtU(S.dims.y)} × ${fmtU(S.dims.z)}</div>`;
+  if (S.buildMs != null) html += `<div><b>Built in</b>${S.buildMs < 1000 ? Math.round(S.buildMs) + " ms" : (S.buildMs / 1000).toFixed(1) + " s"} · print-ready STL</div>`;
   if (sf) html += `<div><b>Print surface · ${sf.label}</b>${fmtU(sf.W)} × ${fmtU(sf.H)}</div>`;
   if (S.pl) html += `<div><b>Artwork</b>${fmtU(S.pl.w)} × ${fmtU(S.pl.h)} · ${S.pl.mode === "keep" ? "fixed size" : S.pl.mode === "cover" ? "fills surface" : S.pl.mode === "snap" ? "snapped to outline" : "fits inside"}</div>`;
   html += `<div><b>Mesh</b>${tri.toLocaleString()} triangles</div>`;
@@ -3262,6 +3263,11 @@ const TESTS = [
   ["8 · 95 mm circular coaster", async () => {
     const m = await tBuildShape({ shape: "oval" }, 95, 95, 4), d = tDims(m.bb), exp = Math.PI * 47.5 * 47.5 * 4;
     return [near(d[0], 95, 0.03) && near(d[1], 95, 0.03) && near(m.v.volume, exp, exp * 0.005) && tMeshOk(m), `${tMeshTxt(m)}; volume ${m.v.volume.toFixed(0)} vs ${exp.toFixed(0)} mm³`];
+  }],
+  ["Speed · 2000 px photo to print-ready STL in under 60 s", async () => {
+    const c = tcan(2000, 2000, g => { g.fillStyle = "#2f6fd6"; g.beginPath(); g.ellipse(1000, 1000, 900, 700, 0.3, 0, Math.PI * 2); g.fill(); g.fillStyle = "#fff"; g.fillRect(700, 800, 600, 400); });
+    const t0 = performance.now(), A = prepareArt(c, "auto", 18), m = await tBuildArt(A, 80, 3), ms = performance.now() - t0;
+    return [ms < 60000 && tMeshOk(m), `${Math.round(ms)} ms from image to a closed ${tDims(m.bb).map(v => v.toFixed(1)).join(" × ")} mm STL (${m.v.triangles} triangles)`];
   }],
   ["8b · coaster with 2 mm raised lip", async () => {
     const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 95, 95, 2), d = tDims(m.bb);
