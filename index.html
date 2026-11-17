@@ -452,6 +452,20 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <p class="status" id="tplStatus"></p>
       </section>
 
+      <section class="card c" id="editCard">
+        <h3>Edit one part</h3>
+        <p class="note">Select one piece or one flat face, then say what to change. Only that section is rebuilt; the rest of the mesh is left exactly as it is.</p>
+        <div class="row">
+          <label class="f" for="edMode">Select<select id="edMode"><option value="shell">Whole piece (connected part)</option><option value="face">Flat face</option></select></label>
+        </div>
+        <div class="btns"><button class="btn small" id="edPick" aria-pressed="false">Tap to select</button><button class="btn small" id="edClear">Clear selection</button></div>
+        <p class="status" id="edSel">Nothing selected.</p>
+        <label class="f" for="edPrompt">Change<input id="edPrompt" type="text" placeholder="e.g. raise 2 mm · move 5 mm left · 120% · rotate 90 · smooth · delete" autocomplete="off"></label>
+        <div class="btns"><button class="btn primary small" id="edApply">Apply to selection</button></div>
+        <div class="chips" id="edChips"></div>
+        <p class="status" id="edStatus"></p>
+      </section>
+
       <section class="card c">
         <h3>Position on the build plate</h3>
         <label class="f" for="printer">Bambu printer
@@ -1449,7 +1463,7 @@ async function genBase() {
     const nat = S.stl.nat, zt = Math.max(0.2, d.z - fh), sx = d.x / nat.x, sy = d.y / nat.y, sz = zt / nat.z;
     const src = S.stl.tris, t = new Float32Array(src.length);
     for (let i = 0; i < src.length; i += 3) { t[i] = src[i] * sx; t[i + 1] = src[i + 1] * sy; t[i + 2] = src[i + 2] * sz; }
-    return { kind: "stl", tris: t };
+    return { kind: "stl", tris: t, ...(S.stl.floorZ != null ? { floorZ: S.stl.floorZ * sz } : {}) };
   }
   const lipH = sp.lip && (+sp.lipW || 0) > 0 ? Math.max(0.2, +sp.lipH || 2) : 0;
   const t = Math.max(0.6, d.z - Math.max(fh, lipH));
@@ -1978,6 +1992,7 @@ function pick(e) {
     const bb0 = triBBox(S.base.pocket ? S.base.tris.subarray(0, S.base.tris.length - S.base.pocketTris) : S.base.tris);
     S.spec.nfc = { ...S.spec.nfc, on: true, pos: "manual", x: +(p.x - bb0[0]).toFixed(2), y: +(p.y - bb0[1]).toFixed(2) }; syncNfc(); V.placingNfc = false; $("nfcTap").setAttribute("aria-pressed", false); updateInfo(); scheduleGeo(); return;
   }
+  if (V.editing && V.pickMesh) { edPick(e); return; }
   if (!V.pickMesh || S.step === "model") return;
   const r = $("view3d").getBoundingClientRect(), m = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   const rc = new THREE.Raycaster(); rc.setFromCamera(m, V.cam);
@@ -2059,6 +2074,7 @@ function update3d() {
   if ($("vWire").checked) { const wg = new THREE.WireframeGeometry(mk(all.slice())); V.root.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x7fd0ff, transparent: true, opacity: 0.35 }))); }
   if ($("vThin").checked) { const c = modelCheck(); if (c && c.wall.thinTris.length) { const T = c.key && allTris(), arr = new Float32Array(c.wall.thinTris.length * 9); c.wall.thinTris.forEach((t, i) => { for (let k = 0; k < 9; k++) arr[i * 9 + k] = T[t * 9 + k]; }); const tm = new THREE.Mesh(mk(arr), new THREE.MeshBasicMaterial({ color: 0xff3b3b, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 })); tm.userData.cap = true; V.root.add(tm); } }
   if ($("vEdges").checked) { const eg = new THREE.EdgesGeometry(mk(all.slice()), 25); V.root.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x0c1416 }))); }
+  edOverlay(all, mk);
   V.pickMesh = new THREE.Mesh(mk(all.slice()), new THREE.MeshBasicMaterial()); V.pickMesh.matrixAutoUpdate = false; V.pickMesh.matrix.copy(M);
   // plate
   const P = PRINTERS[$("printer").value];
@@ -2805,6 +2821,136 @@ async function exportModel(fmt, opts) {
   } catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Export failed."; }
   finally { S.exporting = null; }
 }
+
+/* =========================================================
+   Edit mode: select one piece or flat face and change only that section
+   ========================================================= */
+function edEditable() { // the base mesh without the generated NFC cavity, in model millimetres
+  const b = S.base; if (!b) return null; return b.pocket && b.pocketTris ? b.tris.subarray(0, b.tris.length - b.pocketTris) : b.tris;
+}
+function edKey(T, i) { return Math.round(T[i] * 1000) + "," + Math.round(T[i + 1] * 1000) + "," + Math.round(T[i + 2] * 1000); }
+function edShells(T) { // connected pieces by shared vertices
+  const nt = T.length / 9, map = new Map(), vid = new Int32Array(nt * 3); let nv = 0;
+  for (let i = 0; i < nt * 3; i++) { const k = edKey(T, i * 3); let v = map.get(k); if (v === undefined) { v = nv++; map.set(k, v); } vid[i] = v; }
+  const par = new Int32Array(nv).map((_, i) => i), find = x => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+  for (let t = 0; t < nt; t++) { const a = find(vid[t * 3]); for (let k = 1; k < 3; k++) { const b = find(vid[t * 3 + k]); if (a !== b) par[b] = a; } }
+  const id = new Map(), shell = new Int32Array(nt); for (let t = 0; t < nt; t++) { const r = find(vid[t * 3]); if (!id.has(r)) id.set(r, id.size); shell[t] = id.get(r); }
+  return { shell, count: id.size };
+}
+function edBBox(T, tris) { const b = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]; for (const t of tris) for (let k = 0; k < 9; k += 3) { const i = t * 9 + k; for (let a = 0; a < 3; a++) { b[a] = Math.min(b[a], T[i + a]); b[a + 3] = Math.max(b[a + 3], T[i + a]); } } return b; }
+function edSelect(tri) {
+  const T = edEditable(); if (!T || tri >= T.length / 9) { S.edSel = null; $("edSel").className = "status err"; $("edSel").textContent = tri != null ? "That's lettering or artwork from Design. Change it in Design, or pick the part under it." : "Nothing selected."; update3d(); return; }
+  const mode = $("edMode").value; let tris, label;
+  if (mode === "face") { const sf = surfaceFrom(T, S.adj, tri); tris = sf.list.slice(); label = `Flat face · ${fmtU(sf.W)} × ${fmtU(sf.H)} · ${tris.length.toLocaleString()} triangles`; S.edSel = { mode, tris, n: T.length / 9, normal: sf.n.slice(0, 3) }; }
+  else { const sh = edShells(T); tris = []; for (let t = 0; t < sh.shell.length; t++) if (sh.shell[t] === sh.shell[tri]) tris.push(t); const b = edBBox(T, tris); label = `Piece ${sh.shell[tri] + 1} of ${sh.count} · ${fmtU(b[3] - b[0])} × ${fmtU(b[4] - b[1])} × ${fmtU(b[5] - b[2])} · ${tris.length.toLocaleString()} triangles`; S.edSel = { mode, tris, n: T.length / 9, pieces: sh.count }; }
+  $("edSel").className = "status ok"; $("edSel").textContent = label; update3d();
+}
+function edPick(e) {
+  const r = $("view3d").getBoundingClientRect(), m = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), rc = new THREE.Raycaster(); rc.setFromCamera(m, V.cam); V.pickMesh.updateMatrixWorld(true);
+  const hit = rc.intersectObject(V.pickMesh)[0]; if (!hit) return; edSelect(hit.faceIndex);
+}
+function edOverlay(all, mk) {
+  const sel = S.edSel, T = edEditable(); if (!sel || !T || sel.n !== T.length / 9) return;
+  const a = new Float32Array(sel.tris.length * 9); sel.tris.forEach((t, i) => a.set(all.subarray(t * 9, t * 9 + 9), i * 9));
+  const mesh = new THREE.Mesh(mk(a), new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })); mesh.renderOrder = 5; V.root.add(mesh);
+}
+// plain-language edit commands (no credits): returns a list of operations or an error
+function edParse(text) {
+  const t = " " + (text || "").toLowerCase().replace(/[“”]/g, '"') + " ", ops = [];
+  const num = (re) => { const m = t.match(re); if (!m) return null; let v = parseFloat(m[1]); const u = m[2] || "mm"; if (/^(in|inch|inches|")$/.test(u)) v *= 25.4; else if (u === "cm") v *= 10; return v; };
+  const U = `(-?\\d+(?:\\.\\d+)?)\\s*(mm|cm|in|inch|inches|")?`;
+  if (/\b(delete|remove|erase|get rid of)\b/.test(t)) ops.push({ op: "delete" });
+  if (/\b(duplicate|copy|clone|another one)\b/.test(t)) ops.push({ op: "duplicate" });
+  if (/\b(mirror|flip)\b/.test(t)) ops.push({ op: "mirror", axis: /\b(front|back|vertical|y)\b/.test(t) ? 1 : 0 });
+  if (/\b(smooth|round(?:er|ed)?|soften|softer)\b/.test(t)) ops.push({ op: "smooth", amt: /\b(very|a lot|more|extra)\b/.test(t) ? 2 : 1 });
+  let m = t.match(/rotate[^0-9-]*(-?\d+(?:\.\d+)?)/) || t.match(/(-?\d+(?:\.\d+)?)\s*(?:°|deg|degrees)/); if (m) ops.push({ op: "rotate", deg: (/counter|anti/.test(t) ? 1 : /clockwise/.test(t) ? -1 : 1) * parseFloat(m[1]) }); else if (/\b(rotate|turn)\b/.test(t)) ops.push({ op: "rotate", deg: 90 });
+  for (const [dir, v] of [["left", [-1, 0, 0]], ["right", [1, 0, 0]], ["forward", [0, -1, 0]], ["front", [0, -1, 0]], ["back", [0, 1, 0]], ["backward", [0, 1, 0]]]) {
+    const d = num(new RegExp(`${U}\\s*(?:to the |towards? the )?${dir}\\b`)) ?? num(new RegExp(`${dir}\\s*(?:by\\s*)?${U}`)); if (d != null && /\b(move|shift|slide|nudge)\b|^\s*(left|right|forward|back)/.test(t)) ops.push({ op: "move", d: v.map(x => x * d) });
+  }
+  const up = num(new RegExp(`(?:raise|higher|lift|extrude|pull(?: it)? up|up|taller|thicker|grow)\\s*(?:it\\s*)?(?:by\\s*)?${U}`)) ?? num(new RegExp(`${U}\\s*(?:higher|taller|thicker|up)\\b`));
+  const dn = num(new RegExp(`(?:lower|sink|recess|push(?: it)? down|down|shorter|thinner)\\s*(?:it\\s*)?(?:by\\s*)?${U}`)) ?? num(new RegExp(`${U}\\s*(?:lower|shorter|thinner|down)\\b`));
+  if (/\bmove\b/.test(t) && (up != null || dn != null)) ops.push({ op: "move", d: [0, 0, up != null ? up : -dn] });
+  else if (up != null) ops.push({ op: "raise", d: up }); else if (dn != null) ops.push({ op: "raise", d: -dn });
+  const pct = t.match(/(\d+(?:\.\d+)?)\s*%/); if (pct) ops.push({ op: "scale", k: parseFloat(pct[1]) / 100 });
+  else if (/twice as (big|large)|double (the )?size/.test(t)) ops.push({ op: "scale", k: 2 }); else if (/\bhalf (the )?size\b/.test(t)) ops.push({ op: "scale", k: 0.5 });
+  else if (/\b(bigger|larger)\b/.test(t) && !ops.some(o => o.op === "raise")) ops.push({ op: "scale", k: 1.1 }); else if (/\bsmaller\b/.test(t) && !ops.some(o => o.op === "raise")) ops.push({ op: "scale", k: 0.9 });
+  for (const [w, ax] of [["wide|width|across", 0], ["deep|depth|long|length", 1], ["tall|high|height|thick", 2]]) { const v = num(new RegExp(`${U}\\s*(?:${w})\\b`)) ?? num(new RegExp(`(?:${w})\\s*(?:of|to|=)?\\s*${U}`)); if (v != null && !ops.some(o => o.op === "raise" || o.op === "move")) ops.push({ op: "size", axis: ax, v }); }
+  return ops.length ? { ops } : { err: "I didn't catch a change. Try: raise 2 mm, lower 1 mm, move 5 mm left, 120%, 40 mm wide, rotate 90, mirror, smooth, duplicate or delete." };
+}
+function edApplyOps(T0, sel, ops) { // pure: returns { T, notes } or { err }
+  let T = T0.slice(); const notes = [], selSet = new Set(sel.tris);
+  const vertsOf = () => { const keys = new Set(); for (const t of sel.tris) for (let k = 0; k < 3; k++) keys.add(edKey(T, t * 9 + k * 3)); return keys; };
+  const moveWhere = (keys, f) => { for (let i = 0; i < T.length; i += 3) if (keys.has(edKey(T0w, i))) f(i); };
+  let T0w = T0;
+  for (const o of ops) {
+    T0w = T.slice(); const b = edBBox(T, sel.tris), c = [(b[0] + b[3]) / 2, (b[1] + b[4]) / 2, b[2]];
+    if (sel.mode === "face" && !["raise"].includes(o.op)) return { err: `With a flat face selected I can raise or lower it. To ${o.op === "size" ? "resize" : o.op} a part, switch Select to "Whole piece".` };
+    if (o.op === "raise") {
+      const n = sel.mode === "face" ? sel.normal : [0, 0, 1];
+      if (sel.mode === "shell") { // taller/thicker piece: stretch it in Z from its bottom
+        const h = b[5] - b[2], k = (h + o.d) / h; if (!(k > 0.05)) return { err: "That would flatten the piece completely." };
+        for (const t of sel.tris) for (let q = 2; q < 9; q += 3) T[t * 9 + q] = b[2] + (T[t * 9 + q] - b[2]) * k; notes.push(`${o.d > 0 ? "taller" : "shorter"} by ${fmtU(Math.abs(o.d))}`); continue;
+      }
+      const keys = vertsOf(); moveWhere(keys, i => { T[i] += n[0] * o.d; T[i + 1] += n[1] * o.d; T[i + 2] += n[2] * o.d; }); notes.push(`face ${o.d > 0 ? "raised" : "lowered"} ${fmtU(Math.abs(o.d))}`); continue;
+    }
+    const each = f => { for (const t of sel.tris) for (let q = 0; q < 9; q += 3) f(t * 9 + q); };
+    if (o.op === "move") { each(i => { T[i] += o.d[0]; T[i + 1] += o.d[1]; T[i + 2] += o.d[2]; }); notes.push(`moved ${o.d.map((v, a) => v ? ["X", "Y", "Z"][a] + " " + (v > 0 ? "+" : "") + fmtU(v) : "").filter(Boolean).join(" ")}`); }
+    else if (o.op === "scale" || o.op === "size") {
+      const k = o.op === "scale" ? [o.k, o.k, o.k] : (() => { const cur = b[3 + o.axis] - b[o.axis], f = o.v / cur; return o.axis === 2 ? [1, 1, f] : [f, f, f]; })();
+      if (k.some(v => !(v > 0.02 && v < 50))) return { err: "That size change is too extreme." };
+      each(i => { T[i] = c[0] + (T[i] - c[0]) * k[0]; T[i + 1] = c[1] + (T[i + 1] - c[1]) * k[1]; T[i + 2] = c[2] + (T[i + 2] - c[2]) * k[2]; });
+      notes.push(o.op === "scale" ? `scaled ${Math.round(o.k * 100)}%` : `${["width", "depth", "height"][o.axis]} set to ${fmtU(o.v)}`);
+    } else if (o.op === "rotate") { const a = o.deg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a); each(i => { const x = T[i] - c[0], y = T[i + 1] - c[1]; T[i] = c[0] + x * ca - y * sa; T[i + 1] = c[1] + x * sa + y * ca; }); notes.push(`rotated ${o.deg}°`); }
+    else if (o.op === "mirror") { const ax = o.axis; each(i => { T[i + ax] = 2 * c[ax] - T[i + ax]; }); for (const t of sel.tris) for (let a = 0; a < 3; a++) { const p = t * 9 + 3 + a, q = t * 9 + 6 + a, tmp = T[p]; T[p] = T[q]; T[q] = tmp; } notes.push(`mirrored ${ax ? "front to back" : "left to right"}`); }
+    else if (o.op === "smooth") { T = edSmooth(T, sel.tris, o.amt); notes.push("smoothed"); }
+    else if (o.op === "delete") {
+      if (sel.pieces === 1) return { err: "That's the only piece. Deleting it would leave nothing to print." };
+      const keep = []; for (let t = 0; t < T.length / 9; t++) if (!selSet.has(t)) keep.push(t); const o2 = new Float32Array(keep.length * 9); keep.forEach((t, i) => o2.set(T.subarray(t * 9, t * 9 + 9), i * 9)); return { T: o2, notes: [...notes, "piece deleted"], deleted: true };
+    } else if (o.op === "duplicate") { const w = b[3] - b[0], add = new Float32Array(sel.tris.length * 9); sel.tris.forEach((t, i) => { for (let q = 0; q < 9; q++) add[i * 9 + q] = T[t * 9 + q] + (q % 3 === 0 ? w + 5 : 0); }); const o2 = new Float32Array(T.length + add.length); o2.set(T); o2.set(add, T.length); T = o2; notes.push("piece duplicated 5 mm to the right"); }
+  }
+  return { T, notes };
+}
+function edSmooth(T, tris, amt) { // Taubin smoothing on the selected piece; bottom (plate) vertices stay put
+  T = T.slice(); const map = new Map(), pos = [], idx = []; let zmin = 1e9;
+  for (const t of tris) for (let k = 0; k < 3; k++) { const i = t * 9 + k * 3, key = edKey(T, i); let v = map.get(key); if (v === undefined) { v = pos.length; map.set(key, v); pos.push([T[i], T[i + 1], T[i + 2]]); zmin = Math.min(zmin, T[i + 2]); } idx.push(v); }
+  const nb = pos.map(() => new Set()); for (let f = 0; f < idx.length; f += 3) for (let k = 0; k < 3; k++) { const a = idx[f + k], b = idx[f + (k + 1) % 3]; nb[a].add(b); nb[b].add(a); }
+  const fixed = pos.map(p => Math.abs(p[2] - zmin) < 0.01);
+  const step = lam => { const np = pos.map((p, i) => { if (fixed[i] || !nb[i].size) return p; const c = [0, 0, 0]; for (const j of nb[i]) for (let a = 0; a < 3; a++) c[a] += pos[j][a]; return p.map((v, a) => v + lam * (c[a] / nb[i].size - v)); }); for (let i = 0; i < pos.length; i++) pos[i] = np[i]; };
+  for (let it = 0; it < 6 * amt; it++) { step(0.5); step(-0.53); }
+  let q = 0; for (const t of tris) for (let k = 0; k < 3; k++) { const v = pos[idx[q++]], i = t * 9 + k * 3; T[i] = v[0]; T[i + 1] = v[1]; T[i + 2] = v[2]; }
+  return T;
+}
+async function edApply(text) {
+  const st = $("edStatus"), sel = S.edSel, T = edEditable();
+  if (!sel || !T || sel.n !== T.length / 9) { st.className = "status err"; st.textContent = "Select a piece or a face first: tap Tap to select, then tap the model."; return false; }
+  const p = edParse(text); if (p.err) { st.className = "status err"; st.textContent = p.err; return false; }
+  const r = edApplyOps(T, sel, p.ops); if (r.err) { st.className = "status err"; st.textContent = r.err; return false; }
+  let overlap = ""; if (sel.mode === "shell" && !r.deleted) { const sh = edShells(r.T), me = sh.shell[sel.tris[0]], mb = edBBox(r.T, sel.tris), others = new Map(); for (let t = 0; t < sh.shell.length; t++) if (sh.shell[t] !== me) { if (!others.has(sh.shell[t])) others.set(sh.shell[t], []); others.get(sh.shell[t]).push(t); }
+    for (const [k, ts] of others) { const ob = edBBox(r.T, ts); if (mb[0] < ob[3] - 0.01 && mb[3] > ob[0] + 0.01 && mb[1] < ob[4] - 0.01 && mb[4] > ob[1] + 0.01 && mb[2] < ob[5] - 0.01 && mb[5] > ob[2] + 0.01) { overlap = ` Heads up: it now overlaps piece ${k + 1}, so the slicer will merge them.`; break; } } }
+  const v = validateMesh(r.T); if (!v.ok) { st.className = "status err"; st.textContent = `Not applied: that change would break the mesh (${v.open} open, ${v.nonman} non-manifold edges). Try a smaller change.`; return false; }
+  // bake: the edited mesh becomes the model; NFC pocket and stand settings carry over
+  const b = triBBox(r.T); if (b[2] < -0.01) { const dz = -b[2]; for (let i = 2; i < r.T.length; i += 3) r.T[i] += dz; }
+  const bb = triBBox(r.T), fh = featHeight(), old = S.spec;
+  // keep the coaster-lip floor and the chosen print face pointing at the same triangles after the edit
+  let floorZ, keepIdx = null; if (r.deleted) { keepIdx = new Int32Array(T.length / 9).fill(-1); let k = 0; const del = new Set(sel.tris); for (let t = 0; t < keepIdx.length; t++) if (!del.has(t)) keepIdx[t] = k++; }
+  const remap = t => keepIdx ? keepIdx[t] : t;
+  if (S.base.floorZ != null) { const ft = remap(pickTop(T, S.base.floorZ)); if (ft >= 0) floorZ = r.T[ft * 9 + 2]; }
+  if (S.surfSel && typeof S.surfSel.tri === "number") { const nt2 = remap(S.surfSel.tri); S.surfSel = nt2 >= 0 ? { tri: nt2 } : "auto"; }
+  S.stl = { name: (S.stl && S.stl.name) || exportName().name, tris: r.T, nat: { x: bb[3] - bb[0], y: bb[4] - bb[1], z: bb[5] - bb[2] }, ...(floorZ != null ? { floorZ } : {}) };
+  S.spec = { kind: "stl", product: old.product || "custom", ...(old.nfc ? { nfc: { ...old.nfc } } : {}), ...(old.stand ? { stand: { ...old.stand } } : {}) };
+  S.dims = { x: +S.stl.nat.x.toFixed(2), y: +S.stl.nat.y.toFixed(2), z: +(S.stl.nat.z + fh).toFixed(2) }; S.dims0 = { ...S.dims };
+  const keepTris = r.deleted ? null : sel.tris; await rebuild(); histPush();
+  S.edSel = null; if (keepTris && S.base) { const E = edEditable(); if (E && E.length === r.T.length) edSelect(keepTris[0]); }
+  if (!S.edSel) { $("edSel").className = "status"; $("edSel").textContent = "Nothing selected."; update3d(); }
+  st.className = "status ok"; st.textContent = `Done: ${r.notes.join(", ")}. Only the selection changed; model is now ${fmtU(S.dims.x)} × ${fmtU(S.dims.y)} × ${fmtU(S.dims.z)}, watertight. Undo puts it back.${overlap}`; return true;
+}
+$("edPick").onclick = () => { V.editing = !V.editing; $("edPick").setAttribute("aria-pressed", V.editing); $("edPick").textContent = V.editing ? "Selecting… tap the model" : "Tap to select"; if (V.editing) { setView("3d"); V.measuring = false; V.placingNfc = false; } };
+$("edClear").onclick = () => { S.edSel = null; $("edSel").className = "status"; $("edSel").textContent = "Nothing selected."; update3d(); };
+$("edMode").onchange = () => { if (S.edSel) edSelect(S.edSel.tris[0]); };
+$("edApply").onclick = () => edApply($("edPrompt").value);
+$("edPrompt").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); edApply($("edPrompt").value); } });
+$("edChips").innerHTML = ["raise 1 mm", "lower 1 mm", "110%", "90%", "move 5 mm left", "rotate 90", "smooth", "duplicate", "delete"].map(c => `<button class="chip" data-ed="${c}">${c}</button>`).join("");
+document.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => { $("edPrompt").value = b.dataset.ed; edApply(b.dataset.ed); });
 
 /* =========================================================
    Prototype → build: low-res draft first, print-ready file on demand
