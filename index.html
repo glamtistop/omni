@@ -207,6 +207,9 @@ body.dragging #dropOv { display: flex; }
 #measLbl { position: absolute; transform: translate(-50%, -130%); pointer-events: none; background: #7fd0ff; color: #08151a; border-color: #7fd0ff; z-index: 5; white-space: nowrap; }
 #bPreview { width: 100%; height: auto; border-radius: 10px; background: #0d1618; border: 1px solid var(--line); }
 #prOut { margin-top: 6px; } #prOut .big { font-size: 20px; color: var(--accent); }
+.mvcard { margin-top: 22px; display: grid; gap: 10px; } .mvrow { display: flex; flex-wrap: wrap; gap: 10px; }
+.mvitem { position: relative; display: grid; gap: 4px; width: 112px; } .mvitem img { width: 112px; height: 84px; object-fit: contain; background: #0d1618; border-radius: 8px; border: 1px solid var(--line); }
+.mvitem select { font-size: 13px; } .mvitem button { position: absolute; top: 2px; right: 2px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; }
 .nudge { align-items: flex-end; }
 .describe { display: grid; gap: 8px; } .describe textarea { width: 100%; } #descParse b { color: var(--accent); font-weight: 600; } .nudge .f.inline { margin: 0; min-width: 110px; flex: 0 0 auto; }
 .checks li.info::before { background: var(--muted, #8aa); }
@@ -288,6 +291,16 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
     <p class="note">Credit-free: everything in Model, Measure, Design, Preview, Export, Print and Saved runs in your browser with no Claude AI. Parts are flat or raised-relief (2.5D) shapes from your image. Fully sculpted 360° models need a separate 3D modeling tool.</p>
     <p class="status" id="cStatus"></p>
   </div>
+  <section class="mvcard">
+    <h2 class="sec">3D from 2–8 photos of one object · no credits</h2>
+    <p class="note">Photograph the object straight-on from different sides (front, side, back, top…) on a plain background. The app carves a solid 3D shape that matches every outline. Best for objects without deep hollows; you can then print on any face.</p>
+    <div class="btns"><button class="btn" id="mvPick">Add photos</button></div>
+    <input type="file" id="mvFiles" accept="image/*" multiple class="hidden">
+    <div class="mvrow" id="mvRow"></div>
+    <div class="row"><label class="f" for="mvH">Real height of the object<span class="unit" data-unit="mm"><input type="number" id="mvH" min="5" max="400" step="1" value="60"></span></label></div>
+    <div class="btns"><button class="btn" id="mvDraft" disabled>Quick draft</button><button class="btn primary" id="mvFinal" disabled>Build full model</button></div>
+    <p class="status" id="mvStatus"></p>
+  </section>
   <div class="starts">
     <h2 class="sec">Or start from a model</h2>
     <div class="chips" id="shapeStarts">
@@ -2310,6 +2323,127 @@ $("chgBtn").onclick = async () => {
   $("chgText").value = "";
 };
 
+
+/* =========================================================
+   3D from 2–8 photos of one object (no credits): silhouette carving + marching tetrahedra
+   ========================================================= */
+const MV_VIEWS = { front: "Front", right: "Right side", back: "Back", left: "Left side", top: "Top", bottom: "Bottom", "front-right": "Front-right 45°", "front-left": "Front-left 45°", "back-right": "Back-right 45°", "back-left": "Back-left 45°" };
+const MV_ORDER = ["front", "right", "back", "left", "top", "front-right", "front-left", "bottom"];
+S.mv = [];
+function mvAxes(v) { // r = image right, u = image up, in object space (X right, Y back, Z up); h = view is horizontal
+  if (v === "top") return { r: [1, 0, 0], u: [0, 1, 0], h: false };
+  if (v === "bottom") return { r: [-1, 0, 0], u: [0, 1, 0], h: false };
+  const q = Math.SQRT1_2, d = { front: [0, 1], back: [0, -1], left: [1, 0], right: [-1, 0], "front-right": [-q, q], "front-left": [q, q], "back-right": [-q, -q], "back-left": [q, -q] }[v] || [0, 1]; // looking direction
+  return { r: [d[1], -d[0], 0], u: [0, 0, 1], h: true };
+}
+function mvSilhouette(A) { // binary mask of the object, cropped to its bounding box, at most 360 px
+  const c = A.cut, k = Math.min(1, 360 / Math.max(c.width, c.height)), w = Math.max(2, Math.round(c.width * k)), h = Math.max(2, Math.round(c.height * k));
+  const t = document.createElement("canvas"); t.width = w; t.height = h; const g = t.getContext("2d", { willReadFrequently: true }); g.drawImage(c, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, m = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) m[i] = d[i * 4 + 3] > 100 ? 1 : 0;
+  // small dilation so slightly misaligned photos don't carve away real material
+  const o = m.slice(); for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) if (!m[y * w + x] && (m[y * w + x - 1] || m[y * w + x + 1] || m[(y - 1) * w + x] || m[(y + 1) * w + x])) o[y * w + x] = 1;
+  return { m: o, w, h };
+}
+async function mvBuild(opts) {
+  const views = S.mv.filter(v => v.A && !v.A.empty); if (views.length < 2) throw new UserError("Add at least 2 photos of the same object from different sides.");
+  const sil = views.map(v => ({ ...mvSilhouette(v.A), view: v.view, ax: mvAxes(v.view) }));
+  // object proportions (half-extents, height = 1) from straight-on views
+  const ratio = names => { const r = sil.filter(s => names.includes(s.view)).map(s => s.w / s.h); return r.length ? r.reduce((a, b) => a + b, 0) / r.length : null; };
+  const top = sil.find(s => s.view === "top" || s.view === "bottom");
+  let ex = ratio(["front", "back"]), ey = ratio(["left", "right"]); const ez = 1;
+  if (ex == null && ey != null && top) ex = ey * (top.w / top.h); if (ey == null && ex != null && top) ey = ex * (top.h / top.w);
+  if (ex == null && ey == null) { const r = ratio(["front-right", "front-left", "back-right", "back-left"]) || 1; ex = ey = r / Math.SQRT2; }
+  if (ex == null) ex = ey; if (ey == null) ey = ex;
+  for (const s of sil) s.k = s.ax.h ? (s.h - 1) / (2 * ez) : (s.w - 1) / (2 * (s.view === "top" || s.view === "bottom" ? ex : ex));
+  // voxel grid over the box [-ex,ex]×[-ey,ey]×[-ez,ez]
+  const N = opts.res, L = Math.max(ex, ey, ez), step = 2 * L / N, nx = Math.max(2, Math.ceil(2 * ex / step)) + 2, ny = Math.max(2, Math.ceil(2 * ey / step)) + 2, nz = Math.max(2, Math.ceil(2 * ez / step)) + 2;
+  const F = new Float32Array(nx * ny * nz), id = (i, j, k) => (k * ny + j) * nx + i, P = (i, n, e) => -e + (i - 0.5) * (2 * e / (n - 2));
+  for (let k = 1; k < nz - 1; k++) { const z = P(k, nz, ez); for (let j = 1; j < ny - 1; j++) { const y = P(j, ny, ey); for (let i = 1; i < nx - 1; i++) { const x = P(i, nx, ex); let inside = 1;
+    for (const s of sil) { const a = s.ax, pu = x * a.r[0] + y * a.r[1] + z * a.r[2], pv = x * a.u[0] + y * a.u[1] + z * a.u[2], px = Math.round((s.w - 1) / 2 + pu * s.k), py = Math.round((s.h - 1) / 2 - pv * s.k); if (px < 0 || py < 0 || px >= s.w || py >= s.h || !s.m[py * s.w + px]) { inside = 0; break; } }
+    F[id(i, j, k)] = inside; } } if (k % 8 === 0) await new Promise(r => setTimeout(r, 0)); }
+  // soften the voxel steps (two box-blur passes) so the surface comes out smooth
+  const blur = () => { const G = new Float32Array(F.length); for (let k = 1; k < nz - 1; k++) for (let j = 1; j < ny - 1; j++) for (let i = 1; i < nx - 1; i++) { let s = 0; for (let c = -1; c <= 1; c++) for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) s += F[id(i + a, j + b, k + c)]; G[id(i, j, k)] = s / 27; } F.set(G); };
+  blur(); if (opts.smooth) blur();
+  const tris = marchTets(F, nx, ny, nz, (i, j, k) => [P(i, nx, ex), P(j, ny, ey), P(k, nz, ez)], 0.5);
+  if (!tris.length) throw new UserError("The photos didn't agree on a shape. Use plain-background photos taken straight from each side, with the whole object in frame.");
+  // real size: height in mm
+  const b = triBBox(tris), sc = opts.heightMm / (b[5] - b[2]); for (let i = 0; i < tris.length; i += 3) { tris[i] = (tris[i] - b[0]) * sc; tris[i + 1] = (tris[i + 1] - b[1]) * sc; tris[i + 2] = (tris[i + 2] - b[2]) * sc; }
+  return { tris, grid: [nx, ny, nz] };
+}
+// marching tetrahedra on a scalar grid: always watertight (each cube split into 6 tets along the same diagonal)
+function marchTets(F, nx, ny, nz, pos, iso) {
+  const out = [], C = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], TETS = [[0, 5, 1, 6], [0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6]];
+  const id = (i, j, k) => (k * ny + j) * nx + i, cv = new Float64Array(8), cp = [], ck = new Array(8);
+  const lerp = (a, b) => { const [ka, pa, va] = a, [kb, pb, vb] = b; const [A, B, VA, VB] = ka < kb ? [pa, pb, va, vb] : [pb, pa, vb, va]; let t = (iso - VA) / (VB - VA); if (t < 0.03) t = 0; else if (t > 0.97) t = 1; /* snap near-corner hits so slivers collapse exactly */ return [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t]; };
+  const tri = (p, q, r, inC, outC) => { const n = [(q[1] - p[1]) * (r[2] - p[2]) - (q[2] - p[2]) * (r[1] - p[1]), (q[2] - p[2]) * (r[0] - p[0]) - (q[0] - p[0]) * (r[2] - p[2]), (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])]; const o = [outC[0] - inC[0], outC[1] - inC[1], outC[2] - inC[2]]; if (n[0] * o[0] + n[1] * o[1] + n[2] * o[2] < 0) out.push(...p, ...r, ...q); else out.push(...p, ...q, ...r); };
+  const cen = a => { const c = [0, 0, 0]; for (const p of a) { c[0] += p[1][0]; c[1] += p[1][1]; c[2] += p[1][2]; } return c.map(v => v / a.length); };
+  for (let k = 0; k < nz - 1; k++) for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    let mn = 1e9, mx = -1e9;
+    for (let c = 0; c < 8; c++) { const v = F[id(i + C[c][0], j + C[c][1], k + C[c][2])]; cv[c] = v; if (v < mn) mn = v; if (v > mx) mx = v; }
+    if (mn > iso || mx <= iso) continue;
+    for (let c = 0; c < 8; c++) { cp[c] = pos(i + C[c][0], j + C[c][1], k + C[c][2]); ck[c] = id(i + C[c][0], j + C[c][1], k + C[c][2]); }
+    for (const T of TETS) {
+      const V = T.map(c => [ck[c], cp[c], cv[c]]), ins = V.filter(v => v[2] > iso), outs = V.filter(v => v[2] <= iso);
+      if (ins.length === 0 || ins.length === 4) continue;
+      const ic = cen(ins), oc = cen(outs);
+      if (ins.length === 1 || ins.length === 3) { const a = ins.length === 1 ? ins[0] : outs[0], o3 = ins.length === 1 ? outs : ins; tri(lerp(a, o3[0]), lerp(a, o3[1]), lerp(a, o3[2]), ic, oc); }
+      else { const [a, b] = ins, [c, d] = outs, p1 = lerp(a, c), p2 = lerp(a, d), p3 = lerp(b, d), p4 = lerp(b, c); tri(p1, p2, p3, ic, oc); tri(p1, p3, p4, ic, oc); }
+    }
+  }
+  return orientMesh(cleanMesh(new Float32Array(out)));
+}
+// make every triangle agree with its neighbours, then point each shell outward
+function orientMesh(T) {
+  const adj = buildAdj(T), nt = adj.nt, seen = new Uint8Array(nt), flip = new Uint8Array(nt), ev = (t, e) => [adj.vid[t * 3 + e], adj.vid[t * 3 + (e + 1) % 3]];
+  const dirOf = (t, a, b) => { for (let e = 0; e < 3; e++) { const [x, y] = ev(t, e); if (x === a && y === b) return 1; if (x === b && y === a) return -1; } return 0; };
+  const shells = [];
+  for (let s0 = 0; s0 < nt; s0++) { if (seen[s0]) continue; const q = [s0], list = [s0]; seen[s0] = 1;
+    while (q.length) { const t = q.pop(); for (let e = 0; e < 3; e++) { const n = adj.nbr[t * 3 + e]; if (n < 0 || seen[n]) continue; const [a, b] = ev(t, e), dt = flip[t] ? -1 : 1, dn = dirOf(n, a, b); if (dn === 0) continue; flip[n] = dn * dt === 1 ? 1 : 0; seen[n] = 1; q.push(n); list.push(n); } }
+    shells.push(list); }
+  const o = T.slice(), sw = t => { const b = t * 9; for (let j = 0; j < 3; j++) { const x = o[b + 3 + j]; o[b + 3 + j] = o[b + 6 + j]; o[b + 6 + j] = x; } };
+  for (let t = 0; t < nt; t++) if (flip[t]) sw(t);
+  for (const list of shells) { let v = 0; for (const t of list) { const b = t * 9; v += o[b] * (o[b + 4] * o[b + 8] - o[b + 5] * o[b + 7]) - o[b + 1] * (o[b + 3] * o[b + 8] - o[b + 5] * o[b + 6]) + o[b + 2] * (o[b + 3] * o[b + 7] - o[b + 4] * o[b + 6]); } if (v < 0) for (const t of list) sw(t); }
+  return o;
+}
+// weld vertices and drop triangles that collapsed to a line or point (keeps the surface closed)
+function cleanMesh(T) {
+  const map = new Map(), P = [], idx = new Int32Array(T.length / 3);
+  for (let i = 0; i < T.length; i += 3) { const k = Math.round(T[i] * 1e3) + "," + Math.round(T[i + 1] * 1e3) + "," + Math.round(T[i + 2] * 1e3); let v = map.get(k); if (v === undefined) { v = P.length / 3; map.set(k, v); P.push(T[i], T[i + 1], T[i + 2]); } idx[i / 3] = v; }
+  const out = []; for (let t = 0; t < idx.length; t += 3) { const a = idx[t], b = idx[t + 1], c = idx[t + 2]; if (a === b || b === c || a === c) continue; out.push(P[a * 3], P[a * 3 + 1], P[a * 3 + 2], P[b * 3], P[b * 3 + 1], P[b * 3 + 2], P[c * 3], P[c * 3 + 1], P[c * 3 + 2]); }
+  return new Float32Array(out);
+}
+function mvRender() {
+  const row = $("mvRow"); row.innerHTML = "";
+  S.mv.forEach((v, i) => {
+    const d = document.createElement("div"); d.className = "mvitem";
+    d.innerHTML = `<img alt="View ${i + 1}" src="${v.url}"><select aria-label="Which side is photo ${i + 1}">${Object.entries(MV_VIEWS).map(([k, l]) => `<option value="${k}"${k === v.view ? " selected" : ""}>${l}</option>`).join("")}</select><button aria-label="Remove photo ${i + 1}">×</button>`;
+    d.querySelector("select").onchange = e => { v.view = e.target.value; mvStatus(); }; d.querySelector("button").onclick = () => { S.mv.splice(i, 1); mvRender(); }; row.appendChild(d);
+  });
+  mvStatus();
+}
+function mvStatus() {
+  const n = S.mv.length, dup = new Set(S.mv.map(v => v.view)).size !== n, st = $("mvStatus");
+  st.className = n >= 2 && !dup ? "status ok" : "status"; st.textContent = n < 2 ? `${n} of 2–8 photos. Take them straight-on with a plain background.` : dup ? "Two photos are set to the same side. Give each photo its own side." : `${n} views ready.`;
+  $("mvDraft").disabled = $("mvFinal").disabled = n < 2 || dup;
+}
+async function mvAdd(files) {
+  for (const f of files) { if (!/^image\//.test(f.type) || S.mv.length >= 8) continue;
+    try { const im = await fileToImage(f), src = toCanvas(im, 1600), used = new Set(S.mv.map(v => v.view)); S.mv.push({ url: URL.createObjectURL(f), A: prepareArt(src, "auto", 18, null, f.name, im.naturalWidth), view: MV_ORDER.find(v => !used.has(v)) || "front" }); } catch (e) { console.error(e); } }
+  mvRender();
+}
+$("mvFiles").onchange = e => { mvAdd([...e.target.files]); e.target.value = ""; };
+$("mvPick").onclick = () => $("mvFiles").click();
+async function mvGo(draft) {
+  const st = $("mvStatus"); st.className = "status"; st.textContent = draft ? "Carving a quick draft…" : "Building the full-detail model…"; const t0 = performance.now();
+  try {
+    const H = clamp(+$("mvH").value || 60, 5, 400), r = await mvBuild({ res: draft ? 48 : 112, smooth: !draft, heightMm: H });
+    const st2 = { tris: r.tris, name: "photo-scan" }; const b = triBBox(r.tris); st2.nat = { x: b[3] - b[0], y: b[4] - b[1], z: b[5] - b[2] };
+    S.refs = []; renderRefs(); await importStlObject(st2, draft);
+    st.className = "status ok"; st.textContent = `${draft ? "Draft" : "Full model"} built from ${S.mv.length} photos in ${((performance.now() - t0) / 1000).toFixed(1)} s · ${(r.tris.length / 9).toLocaleString()} triangles.`;
+  } catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Couldn't build a model from those photos."; }
+}
+$("mvDraft").onclick = () => mvGo(true); $("mvFinal").onclick = () => mvGo(false);
+
 /* =========================================================
    Inspect: standard views, section cut, X-ray, edges, 2-point measure
    ========================================================= */
@@ -3681,8 +3815,12 @@ document.querySelectorAll("#shapeStarts [data-shape]").forEach(b => b.onclick = 
 $("stlBtn").onclick = () => $("stlFile").click();
 $("stlFile").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) importStlFile(f); };
 async function importStlFile(f) {
+  try { const st = parseSTL(await f.arrayBuffer()); st.name = f.name.replace(/\.[^.]+$/, ""); await importStlObject(st); }
+  catch (err) { $("cStatus").className = "status err"; $("cStatus").textContent = err.message; }
+}
+async function importStlObject(st, draft) {
   try {
-    const st = parseSTL(await f.arrayBuffer()); st.name = f.name.replace(/\.[^.]+$/, ""); S.stl = st; S.artImg = null; S.design = null; $("ltText").value = ""; S.snap = null;
+    S.stl = st; S.draft = !!draft; S.artImg = null; S.design = null; $("ltText").value = ""; S.snap = null;
     if (S.refs.length) { const img = await fileToImage(S.refs[0].file), src = toCanvas(img, 2400); S.artImg = prepareArt(src, "auto", 18, null, S.refs[0].file.name.replace(/\.[^.]+$/, ""), img.naturalWidth); setMode("snap"); setFilament(S.filament); } else setMode("contain");
     $("pRot").value = 0;
     startModel({ kind: "stl", product: "custom" }, { x: +st.nat.x.toFixed(2), y: +st.nat.y.toFixed(2), z: +st.nat.z.toFixed(2) }, true, "x");
