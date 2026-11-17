@@ -1,5 +1,5 @@
 // Omni Part Maker service worker: offline app shell, network-first for the page so updates arrive.
-const VERSION = "opm-20261116175336";
+const VERSION = "opm-20261116180117";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
   "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js", "https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {}))))); });

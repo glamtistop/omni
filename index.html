@@ -142,6 +142,9 @@ body.panel-off .work { grid-template-columns: minmax(0, 1fr); } body.panel-off .
 #view3d, #view2d { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #view3d { touch-action: none; cursor: grab; }
 #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.draftbadge { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 12px; border-radius: 999px; background: rgba(10,17,19,.88); border: 1px solid #f2a33a; color: #f6d7a6; font-size: 12.5px; white-space: nowrap; max-width: calc(100% - 20px); }
+.draftbadge b { color: #f2a33a; letter-spacing: .06em; }
+label.check.proto { max-width: 720px; margin: 0 auto 14px; align-items: flex-start; }
 .dl { position: absolute; transform: translate(-50%, -50%); font: 500 12px var(--font-mono); padding: 2px 7px; border-radius: 6px; background: rgba(7,12,13,.82); white-space: nowrap; border: 1px solid; }
 .dl.x { color: var(--ax-x); border-color: var(--ax-x); } .dl.y { color: var(--ax-y); border-color: var(--ax-y); } .dl.z { color: var(--ax-z); border-color: var(--ax-z); }
 .badge { position: absolute; left: 10px; bottom: 10px; font: 500 12px var(--font-mono); background: rgba(7,12,13,.85); border: 1px solid var(--accent); color: var(--accent); padding: 4px 9px; border-radius: 8px; pointer-events: none; max-width: calc(100% - 20px); }
@@ -257,6 +260,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
 <!-- ============ 1 MODEL ============ -->
 <section id="scr-model" class="model-step">
   <h1 class="hero">What will you create in 3D?</h1>
+  <label class="check proto" for="protoMode"><input type="checkbox" id="protoMode"> <span><b>Prototype first.</b> Build a fast low-res concept to look at, then tap <b>Build final</b> for the print-ready file. Downloads stay locked while it's a draft.</span></label>
   <div class="maker">
     <div class="describe">
       <label class="f" for="descText">Describe it · no credits
@@ -351,6 +355,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <canvas id="view2d" class="hidden" aria-label="Print image preview"></canvas>
         <canvas id="viewOutline" class="hidden" aria-label="Outline editor"></canvas>
         <div id="labels"></div>
+        <div id="draftBadge" class="draftbadge hidden" role="status"><span><b>DRAFT</b> <span id="draftTxt">low-res concept</span></span><button class="btn small primary" id="draftFinal">Build final</button></div>
         <div id="vtools" class="hidden" role="group" aria-label="Inspect the model">
           <div class="vrow vviews">
             <button data-view="iso" title="Angled view (0)">3D</button><button data-view="top" title="Top (5)">Top</button><button data-view="front" title="Front (1)">Front</button><button data-view="back" title="Back (2)">Back</button><button data-view="left" title="Left (3)">Left</button><button data-view="right" title="Right (4)">Right</button><button data-view="bottom" title="Bottom (6)">Bottom</button>
@@ -1298,7 +1303,7 @@ async function bodyRaster(spec, X, Y, src, driver) {
   }
   if (W > 600 || H > 600) throw new UserError("That would be larger than 600 mm. Try a smaller size.");
   const stem = standStem(spec), pad = 3 + (spec.ring !== "none" ? outerR * 2 + 2 : 0) + (stem ? stem.down : 0), DW = W + pad * 2, DH = H + pad * 2, box = { x: pad, y: pad, w: W, h: H };
-  const R = Math.min(12, 1100 / Math.max(DW, DH)), gw = Math.ceil(DW * R), gh = Math.ceil(DH * R);
+  const R = Math.min(12, 1100 / Math.max(DW, DH)) * (S.draft ? 0.3 : 1), gw = Math.ceil(DW * R), gh = Math.ceil(DH * R);
   const cv = document.createElement("canvas"); cv.width = gw; cv.height = gh;
   const g = cv.getContext("2d", { willReadFrequently: true }); g.setTransform(R, 0, 0, R, 0, 0); g.fillStyle = "#fff";
   const cr = cut ? { x: pad + m, y: pad + m, w: cw, h: ch } : null;
@@ -2169,7 +2174,7 @@ function drawBatchPreview(pl) {
 const batchKey = pl => [pl.T.length, pl.b.join(","), pl.clear, pl.orient].join("|");
 for (const id of ["bQty", "bBed", "bGap", "bNames", "bClear", "bDepth", "bJigW"]) $(id).addEventListener("input", () => { batchSummary(); priceUpdate(); });
 async function batchExport(jigOnly) {
-  const st = $("bStatus"); if (S.exporting) { st.textContent = "An export is already running."; return; }
+  const st = $("bStatus"); if (draftGuard(st)) return; if (S.exporting) { st.textContent = "An export is already running."; return; }
   const pl = batchPlan(); if (pl.err) { st.className = "status err"; st.textContent = pl.err; return; }
   if (jigOnly && pl.jigErr) { st.className = "status err"; st.textContent = pl.jigErr; return; }
   const ctl = new AbortController(); S.exporting = ctl; $("xCancel").classList.remove("hidden"); st.className = "status"; st.textContent = "Building the batch…";
@@ -2775,7 +2780,7 @@ $("fmtBtns").innerHTML = FMTS.map(([k, l]) => `<button class="btn small" data-fm
 document.querySelectorAll("[data-fmt]").forEach(b => b.onclick = () => exportModel(b.dataset.fmt, /^(glb|obj|usdz)$/.test(b.dataset.fmt) && $("pbrExport").checked && S.surf ? { tex: pbrTexture } : null));
 function modelMaterial() { const f = FIL_FIN[$("pbrFil").value] || FIL_FIN.basic; return { color: S.filament, metallic: f.m, roughness: f.r, name: exportName().name }; }
 async function exportModel(fmt, opts) {
-  const st = $("fmtStatus"); if (!S.base) return; if (S.exporting) { st.textContent = "An export is already running."; return; }
+  const st = $("fmtStatus"); if (!S.base) return; if (draftGuard(st)) return; if (S.exporting) { st.textContent = "An export is already running."; return; }
   if (fmt === "stl" && !polySettings().print) return exportFile("stl", st);
   S.exporting = new AbortController(); st.className = "status"; st.textContent = `Building ${fmt.toUpperCase()}…`; await new Promise(r => setTimeout(r, 20));
   try {
@@ -2800,6 +2805,27 @@ async function exportModel(fmt, opts) {
   } catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Export failed."; }
   finally { S.exporting = null; }
 }
+
+/* =========================================================
+   Prototype → build: low-res draft first, print-ready file on demand
+   ========================================================= */
+function draftGuard(st) { if (!S.draft) return false; st.className = "status err"; st.textContent = "This is a low-res draft. Tap Build final (top of the 3D view) to make the print-ready file, then download."; return true; }
+function draftUi() {
+  const on = !!(S.draft && S.base); $("draftBadge").classList.toggle("hidden", !on);
+  if (on) $("draftTxt").textContent = S.spec && S.spec.kind === "stl" ? "low-res concept from photos" : `low-res concept · ${S.draftMs != null ? Math.round(S.draftMs) + " ms" : ""}`;
+  document.body.classList.toggle("is-draft", on);
+}
+async function buildFinal() {
+  if (!S.draft) return; const b = $("draftFinal"); b.disabled = true; b.textContent = "Building…";
+  try {
+    if (S.spec && S.spec.kind === "stl") { if (S.mv && S.mv.length >= 2) await mvGo(false); else { S.draft = false; draftUi(); } }
+    else { S.draft = false; await rebuild(); histPush(); }
+    const st = $("xStatus"); if (st && !S.draft) { st.className = "status ok"; st.textContent = `Final print-ready model built${S.buildMs != null ? " in " + (S.buildMs < 1000 ? Math.round(S.buildMs) + " ms" : (S.buildMs / 1000).toFixed(1) + " s") : ""}${S.draftMs != null ? ` (draft took ${Math.round(S.draftMs)} ms)` : ""}. Downloads are unlocked.`; }
+  } finally { b.disabled = false; b.textContent = "Build final"; draftUi(); }
+}
+$("draftFinal").onclick = buildFinal;
+try { $("protoMode").checked = localStorage.getItem("opm-proto") === "1"; } catch (e) {}
+$("protoMode").addEventListener("change", () => { try { localStorage.setItem("opm-proto", $("protoMode").checked ? "1" : "0"); } catch (e) {} });
 
 /* =========================================================
    PBR texture maps (base color, metallic, roughness, normal) made from the artwork, on this device
@@ -2869,7 +2895,7 @@ $("pbrRelief").addEventListener("input", () => { $("pbrReliefVal").textContent =
 for (const id of ["pbrInk", "pbrFil", "pbrMetal"]) $(id).addEventListener("change", () => { pbrPreviewSoon(); if (id === "pbrFil") update3d(); });
 $("pbrView").addEventListener("change", () => { S.pbrPrev = null; if ($("pbrView").checked) pbrPreviewSoon(); else update3d(); });
 $("pbrDl").onclick = async () => {
-  const st = $("pbrStatus"); if (!S.surf) { st.className = "status err"; st.textContent = "Make or import a model first."; return; }
+  const st = $("pbrStatus"); if (!S.surf) { st.className = "status err"; st.textContent = "Make or import a model first."; return; } if (draftGuard(st)) return;
   const res = pbrSettings().res; st.className = "status"; st.textContent = `Making ${res} px maps…`; await new Promise(r => setTimeout(r, 20));
   try {
     const t0 = performance.now(), p = await pbrPngs(res), name = exportName().name, stamp = stampNow(), files = [];
@@ -3026,7 +3052,7 @@ async function rebuild() {
     S.base = base;
     S.adj = base.kind === "stl" && !base.pocket ? (S.stl.adj || (S.stl.adj = buildAdj(S.stl.tris))) : buildAdj(base.tris);
     selectSurface(S.surfSel);
-    writeDims(); refreshArt(true); showMsg(""); S.buildMs = performance.now() - t0; updateInfo();
+    writeDims(); refreshArt(true); showMsg(""); S.buildMs = performance.now() - t0; if (S.draft) S.draftMs = S.buildMs; updateInfo(); draftUi();
     clearTimeout(S.mcTimer); S.mcTimer = setTimeout(() => { if (id !== genId || !S.base) return; try { modelCheck(); renderModelCheck(); renderChecks(); if ($("vThin").checked) update3d(); } catch (e) { console.error(e); } }, 250);
   } catch (e) { if (id !== genId) return; console.error(e); showMsg(e instanceof UserError ? e.message : "Something went wrong building the model: " + e.message); }
   finally { if (id === genId) busy(false); }
@@ -3066,7 +3092,7 @@ function updateInfo() {
   if (!S.base) { $("specs").innerHTML = ""; return; }
   const tri = allTris().length / 9;
   let html = `<div><b>Model X × Y × Z</b>${fmtU(S.dims.x)} × ${fmtU(S.dims.y)} × ${fmtU(S.dims.z)}</div>`;
-  if (S.buildMs != null) html += `<div><b>Built in</b>${S.buildMs < 1000 ? Math.round(S.buildMs) + " ms" : (S.buildMs / 1000).toFixed(1) + " s"} · print-ready STL</div>`;
+  if (S.buildMs != null) html += `<div><b>Built in</b>${S.buildMs < 1000 ? Math.round(S.buildMs) + " ms" : (S.buildMs / 1000).toFixed(1) + " s"} · ${S.draft ? "low-res draft" : "print-ready STL"}</div>`;
   if (sf) html += `<div><b>Print surface · ${sf.label}</b>${fmtU(sf.W)} × ${fmtU(sf.H)}</div>`;
   if (S.pl) html += `<div><b>Artwork</b>${fmtU(S.pl.w)} × ${fmtU(S.pl.h)} · ${S.pl.mode === "keep" ? "fixed size" : S.pl.mode === "cover" ? "fills surface" : S.pl.mode === "snap" ? "snapped to outline" : "fits inside"}</div>`;
   html += `<div><b>Mesh</b>${tri.toLocaleString()} triangles</div>`;
@@ -3144,7 +3170,7 @@ function syncModelControls() {
   $("mLip").checked = !!sp.lip; $("mLipH").value = sp.lipH || 2; $("mLipW").value = sp.lipW || 3;
 }
 function startModel(spec, dims, lock, driver, viaOutline) {
-  histButtons(); S.base = null; S.surf = null; S.lastPreview = null; S.spec = spec; S.dims = { ...dims }; S.dims0 = { ...dims }; S.lock = lock; S.driver = driver || "x"; S.surfSel = "top"; S.keepW = 0;
+  histButtons(); if (spec.kind !== "stl") S.draft = $("protoMode").checked; S.draftMs = null; S.base = null; S.surf = null; S.lastPreview = null; S.spec = spec; S.dims = { ...dims }; S.dims0 = { ...dims }; S.lock = lock; S.driver = driver || "x"; S.surfSel = "top"; S.keepW = 0;
   S.rot = { x: 0, y: 0, z: 0 }; const P = PRINTERS[$("printer").value]; S.pos = { x: P[0] / 2, y: P[1] / 2, z: 0 };
   $("pOx").value = 0; $("pOy").value = 0; S.nameEdited = false;
   setLock(lock); syncModelControls();
@@ -3404,7 +3430,7 @@ function renderAccuracy() {
   S.lastChecks = r;
 }
 async function exportFile(which, statusEl) {
-  const st = statusEl || $("xStatus"); if (!S.base || !S.surf) return;
+  const st = statusEl || $("xStatus"); if (!S.base || !S.surf) return; if (draftGuard(st)) return;
   if (S.exporting) { st.textContent = "An export is already running."; return; }
   const F = fileNames(stampNow()), dpi = +$("dpi").value, bleed = +$("bleed").value || 0, cal = calib(), ctl = new AbortController();
   S.exporting = ctl; $("xCancel").classList.remove("hidden"); st.className = "status"; st.textContent = "Building files…";
@@ -4066,7 +4092,7 @@ async function openSaved(it) {
    undo / redo (whole-project snapshots)
    ========================================================= */
 const H = { stack: [], idx: -1, lock: false, timer: null };
-function snapNow() { return { stl: S.spec && S.spec.kind === "stl" ? S.stl : null, spec: S.spec && { ...S.spec }, dims: { ...S.dims }, lock: S.lock, driver: S.driver, pos: { ...S.pos }, rot: { ...S.rot }, surfSel: S.surfSel, keepW: S.keepW, keepH: S.keepH, filament: S.filament, controls: controlState(), art: S.artImg, edits: S.artImg ? S.artImg.edits.slice() : null }; }
+function snapNow() { return { draft: !!S.draft, stl: S.spec && S.spec.kind === "stl" ? S.stl : null, spec: S.spec && { ...S.spec }, dims: { ...S.dims }, lock: S.lock, driver: S.driver, pos: { ...S.pos }, rot: { ...S.rot }, surfSel: S.surfSel, keepW: S.keepW, keepH: S.keepH, filament: S.filament, controls: controlState(), art: S.artImg, edits: S.artImg ? S.artImg.edits.slice() : null }; }
 function snapKey(s) { const { art, edits, stl, ...rest } = s; return JSON.stringify(rest) + (stl ? "|stl:" + stl.name + ":" + stl.tris.length : "") + (art ? art.label + "|" + art.bgMode + art.tol + art.smooth + art.holes + art.speck + "|" + rle(edits) : ""); }
 function histPush() {
   if (H.lock || !S.spec) return; clearTimeout(H.timer);
@@ -4077,7 +4103,7 @@ function histApply(s) {
   H.lock = true; clearTimeout(H.timer);
   for (const [id, v] of Object.entries(s.controls)) if ($(id) && id !== "mode" && id !== "grad") $(id).value = v;
   $("grad").checked = !!s.controls.grad; $("pTab").checked = !!s.controls.tab; setMode(s.controls.mode || "cover"); setFilament(s.filament);
-  if (s.stl) S.stl = s.stl; S.spec = { ...s.spec }; S.dims = { ...s.dims }; setLock(s.lock); S.driver = s.driver; S.pos = { ...s.pos }; S.rot = { ...s.rot }; S.surfSel = s.surfSel; S.keepW = s.keepW; S.keepH = s.keepH;
+  if (s.stl) S.stl = s.stl; S.draft = !!s.draft; S.spec = { ...s.spec }; S.dims = { ...s.dims }; setLock(s.lock); S.driver = s.driver; S.pos = { ...s.pos }; S.rot = { ...s.rot }; S.surfSel = s.surfSel; S.keepW = s.keepW; S.keepH = s.keepH;
   S.artImg = s.art; if (s.art && s.edits) { s.art.edits = s.edits.slice(); rebuildMask(s.art); }
   S.snap = null; syncModelControls(); writeDims(); histButtons();
   rebuild().finally(() => { setTimeout(() => { H.lock = false; }, 450); });
