@@ -210,6 +210,8 @@ body.dragging #dropOv { display: flex; }
 .mvcard { margin-top: 22px; display: grid; gap: 10px; } .mvrow { display: flex; flex-wrap: wrap; gap: 10px; }
 .mvitem { position: relative; display: grid; gap: 4px; width: 112px; } .mvitem img { width: 112px; height: 84px; object-fit: contain; background: #0d1618; border-radius: 8px; border: 1px solid var(--line); }
 .mvitem select { font-size: 13px; } .mvitem button { position: absolute; top: 2px; right: 2px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; }
+.mcgrid { display: grid; grid-template-columns: auto auto auto auto; gap: 2px 10px; font-size: 12px; } .mcgrid span { color: var(--muted); } #mcOut .checks { margin: 6px 0 0; font-size: 12px; }
+#vtools { max-height: calc(100% - 16px); overflow: auto; }
 .nudge { align-items: flex-end; }
 .describe { display: grid; gap: 8px; } .describe textarea { width: 100%; } #descParse b { color: var(--accent); font-weight: 600; } .nudge .f.inline { margin: 0; min-width: 110px; flex: 0 0 auto; }
 .checks li.info::before { background: var(--muted, #8aa); }
@@ -355,6 +357,8 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <label class="vrow" for="vCut" title="Slice the model at a height to see inside (red = solid plastic)">Section cut <input type="range" id="vCut" min="0" max="1000" value="1000"><span id="vCutLbl">off</span></label>
           <div class="vrow"><label class="check"><input type="checkbox" id="vXray"> X-ray</label><label class="check"><input type="checkbox" id="vEdges"> Edges</label><button id="vMeasure" aria-pressed="false">Measure</button><button id="vMeasClr">Clear</button></div>
           <div id="vMeasOut" class="vrow">Measure: tap two points on the model.</div>
+          <div class="vrow"><label class="check"><input type="checkbox" id="vWire"> Wireframe</label><label class="check"><input type="checkbox" id="vThin"> Show thin walls</label><button id="mcRun">Re-check</button></div>
+          <div id="mcOut"></div>
         </div>
         <div id="measLbl" class="dl hidden"></div>
         <div class="badge hidden" id="sfBadge"></div>
@@ -1829,6 +1833,7 @@ function runChecks() {
     if (S.thin && S.thin.area > 0) out.push(["bad", `${S.thin.area.toFixed(1)} mm² of the outline is narrower than ${minW.toFixed(1)} mm (red in Print image). Make it bigger or add rim.`]);
     else out.push(["ok", `No parts of the outline are thinner than ${minW.toFixed(1)} mm for a ${noz} mm nozzle.`]);
   }
+  if (S.mcheck && S.mcheck.key && S.mcheck.key.startsWith(allTris().length + ":")) { const c = S.mcheck; if (!c.topo.watertight) out.push(["bad", `The mesh isn't watertight (${c.topo.open} open, ${c.topo.nonman} non-manifold edges). Bambu Studio may repair it, but check the result.`]); if (c.wall.thinShare > 0.001) out.push(["warn", `Some walls are only ${c.wall.min.toFixed(2)} mm thick, under ${c.minWall.toFixed(1)} mm for your nozzle. Turn on Show thin walls in Inspect to see where.`]); }
   if (S.raisedThin > 0) out.push(["warn", `Some raised lettering is narrower than ${minW.toFixed(1)} mm and may not print cleanly. Use a bolder font or larger text.`]);
   if ($("fStyle").value === "relief" && (+$("fStep").value || 0) < 0.4) out.push(["warn", "Relief steps under 0.4 mm are only one or two layers tall and may barely show."]);
   if (S.surf) {
@@ -2018,6 +2023,8 @@ function update3d() {
   if (S.stand && S.stand.tris) {
     const bb0 = triBBox(S.base.tris), sm = new THREE.Mesh(mk(S.stand.tris.slice()), V.sideMat.clone()); sm.position.set(bb0[3] + 12, bb0[1], 0); V.root.add(sm); V.standMesh = sm;
   } else V.standMesh = null;
+  if ($("vWire").checked) { const wg = new THREE.WireframeGeometry(mk(all.slice())); V.root.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x7fd0ff, transparent: true, opacity: 0.35 }))); }
+  if ($("vThin").checked) { const c = modelCheck(); if (c && c.wall.thinTris.length) { const T = c.key && allTris(), arr = new Float32Array(c.wall.thinTris.length * 9); c.wall.thinTris.forEach((t, i) => { for (let k = 0; k < 9; k++) arr[i * 9 + k] = T[t * 9 + k]; }); const tm = new THREE.Mesh(mk(arr), new THREE.MeshBasicMaterial({ color: 0xff3b3b, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 })); tm.userData.cap = true; V.root.add(tm); } }
   if ($("vEdges").checked) { const eg = new THREE.EdgesGeometry(mk(all.slice()), 25); V.root.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x0c1416 }))); }
   V.pickMesh = new THREE.Mesh(mk(all.slice()), new THREE.MeshBasicMaterial()); V.pickMesh.matrixAutoUpdate = false; V.pickMesh.matrix.copy(M);
   // plate
@@ -2444,6 +2451,74 @@ async function mvGo(draft) {
 }
 $("mvDraft").onclick = () => mvGo(true); $("mvFinal").onclick = () => mvGo(false);
 
+
+/* =========================================================
+   Model check: topology stats, watertight, wall thickness (sampled ray casts on a uniform grid)
+   ========================================================= */
+function topoStats(T) {
+  const v = validateMesh(T), adj = buildAdj(v.clean), F = adj.nt, E = new Set(); let area = 0;
+  for (let t = 0; t < F; t++) { for (let e = 0; e < 3; e++) { const a = adj.vid[t * 3 + e], b = adj.vid[t * 3 + (e + 1) % 3]; E.add(a < b ? a * adj.nv + b : b * adj.nv + a); } area += triNormal(v.clean, t)[3]; }
+  const chi = adj.nv - E.size + F, closed = v.open === 0 && v.nonman === 0, genus = closed ? Math.max(0, Math.round((2 * v.shells - chi) / 2)) : null;
+  return { vertices: adj.nv, edges: E.size, faces: F, shells: v.shells, cavities: v.cavities || 0, open: v.open, nonman: v.nonman, flip: v.flip, watertight: v.ok, genus, area, volume: v.volume };
+}
+function triGrid(T) {
+  const b = triBBox(T), nt = T.length / 9, n = Math.max(4, Math.min(96, Math.round(Math.cbrt(nt) * 1.5))), sx = (b[3] - b[0]) / n || 1, sy = (b[4] - b[1]) / n || 1, sz = (b[5] - b[2]) / n || 1, cells = new Map();
+  const ci = (x, lo, s) => Math.max(0, Math.min(n - 1, Math.floor((x - lo) / s)));
+  for (let t = 0; t < nt; t++) { const o = t * 9; let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9, z1 = -1e9; for (let k = 0; k < 3; k++) { const x = T[o + k * 3], y = T[o + k * 3 + 1], z = T[o + k * 3 + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+    for (let k = ci(z0, b[2], sz); k <= ci(z1, b[2], sz); k++) for (let j = ci(y0, b[1], sy); j <= ci(y1, b[1], sy); j++) for (let i = ci(x0, b[0], sx); i <= ci(x1, b[0], sx); i++) { const key = (k * n + j) * n + i; let a = cells.get(key); if (!a) cells.set(key, a = []); a.push(t); } }
+  return { T, b, n, s: [sx, sy, sz], cells };
+}
+// distance to the first surface along a ray (grid DDA), skipping triangle `skip`
+function gridRay(G, p, d, skip, maxD) {
+  const { b, n, s, cells, T } = G, lo = [b[0], b[1], b[2]], idx = [0, 1, 2].map(a => Math.max(0, Math.min(n - 1, Math.floor((p[a] - lo[a]) / s[a]))));
+  const stp = d.map(v => v > 0 ? 1 : -1), tMax = [0, 1, 2].map(a => d[a] === 0 ? 1e30 : ((lo[a] + (idx[a] + (d[a] > 0 ? 1 : 0)) * s[a]) - p[a]) / d[a]), tD = [0, 1, 2].map(a => d[a] === 0 ? 1e30 : Math.abs(s[a] / d[a]));
+  let best = 1e30;
+  for (let guard = 0; guard < 4 * n; guard++) {
+    const list = cells.get((idx[2] * n + idx[1]) * n + idx[0]);
+    if (list) for (const t of list) { if (t === skip) continue; const h = rayTriT(p, d, T, t * 9); if (h > 1e-4 && h < best) best = h; }
+    const a = tMax[0] < tMax[1] ? (tMax[0] < tMax[2] ? 0 : 2) : (tMax[1] < tMax[2] ? 1 : 2);
+    if (best <= tMax[a] || tMax[a] > maxD) break;
+    idx[a] += stp[a]; if (idx[a] < 0 || idx[a] >= n) break; tMax[a] += tD[a];
+  }
+  return best;
+}
+function rayTriT(p, d, T, o) {
+  const e1x = T[o + 3] - T[o], e1y = T[o + 4] - T[o + 1], e1z = T[o + 5] - T[o + 2], e2x = T[o + 6] - T[o], e2y = T[o + 7] - T[o + 1], e2z = T[o + 8] - T[o + 2];
+  const hx = d[1] * e2z - d[2] * e2y, hy = d[2] * e2x - d[0] * e2z, hz = d[0] * e2y - d[1] * e2x, a = e1x * hx + e1y * hy + e1z * hz; if (Math.abs(a) < 1e-12) return -1;
+  const f = 1 / a, sx = p[0] - T[o], sy = p[1] - T[o + 1], sz = p[2] - T[o + 2], u = f * (sx * hx + sy * hy + sz * hz); if (u < 0 || u > 1) return -1;
+  const qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x, v = f * (d[0] * qx + d[1] * qy + d[2] * qz); if (v < 0 || u + v > 1) return -1;
+  return f * (e2x * qx + e2y * qy + e2z * qz);
+}
+// wall thickness: from area-weighted sample points, cast inward along the normal to the opposite surface
+function wallThickness(T, samples, minWall) {
+  const G = triGrid(T), nt = T.length / 9, areas = new Float64Array(nt); let tot = 0; for (let t = 0; t < nt; t++) { tot += triNormal(T, t)[3]; areas[t] = tot; }
+  const res = [], thin = new Set(); let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const maxD = Math.max(G.b[3] - G.b[0], G.b[4] - G.b[1], G.b[5] - G.b[2]) * 2;
+  for (let k = 0; k < samples; k++) {
+    const r = rnd() * tot; let lo = 0, hi = nt - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (areas[m] < r) lo = m + 1; else hi = m; } const t = lo, nr = triNormal(T, t); if (nr[3] === 0) continue;
+    let u = rnd(), w = rnd(); if (u + w > 1) { u = 1 - u; w = 1 - w; } const o = t * 9, p = [0, 1, 2].map(a => T[o + a] + u * (T[o + 3 + a] - T[o + a]) + w * (T[o + 6 + a] - T[o + a]));
+    const d = [-nr[0], -nr[1], -nr[2]], th = gridRay(G, p, d, t, maxD); if (th >= 1e29) continue;
+    res.push(th); if (th < minWall - 0.01) thin.add(t);
+  }
+  res.sort((a, b) => a - b);
+  return { n: res.length, min: res[0], p5: res[Math.floor(res.length * 0.05)], median: res[Math.floor(res.length / 2)], thinTris: [...thin], thinShare: res.filter(v => v < minWall - 0.01).length / Math.max(1, res.length) };
+}
+function modelCheck() {
+  if (!S.base) return null; const T = allTris(), key = T.length + ":" + T[0] + ":" + T[T.length - 1] + ":" + $("nozzle").value;
+  if (S.mcheck && S.mcheck.key === key) return S.mcheck;
+  const minWall = 2 * (+$("nozzle").value || 0.4), t0 = performance.now(), topo = topoStats(T), wall = wallThickness(T, Math.min(1500, 300 + Math.round(T.length / 900)), minWall);
+  S.mcheck = { key, topo, wall, minWall, ms: performance.now() - t0 }; return S.mcheck;
+}
+function renderModelCheck() {
+  const el = $("mcOut"); if (!el || !S.base) return; const c = modelCheck(); if (!c) return; const t = c.topo, w = c.wall, f = v => v == null ? "–" : v.toFixed(2);
+  el.innerHTML = `<div class="mcgrid"><span>Vertices</span><b>${t.vertices.toLocaleString()}</b><span>Triangles</span><b>${t.faces.toLocaleString()}</b><span>Edges</span><b>${t.edges.toLocaleString()}</b><span>Shells</span><b>${t.shells}${t.cavities ? ` (${t.cavities} sealed pocket)` : ""}</b><span>Through-holes</span><b>${t.genus == null ? "–" : t.genus}</b><span>Surface area</span><b>${(t.area / 100).toFixed(1)} cm²</b><span>Volume</span><b>${(t.volume / 1000).toFixed(2)} cm³</b></div>`
+    + `<ul class="checks"><li class="${t.watertight ? "" : "bad"}">${t.watertight ? "Watertight: closed, no holes or loose edges." : `Not watertight: ${t.open} open, ${t.nonman} non-manifold, ${t.flip} flipped edges.`}</li>`
+    + `<li class="${w.thinShare > 0.001 ? "warn" : ""}">Wall thickness: thinnest ${f(w.min)} mm · 5% under ${f(w.p5)} mm · typical ${f(w.median)} mm (${w.n} samples).${w.thinShare > 0.001 ? ` About ${(w.thinShare * 100).toFixed(1)}% of the surface is thinner than ${c.minWall.toFixed(1)} mm (red with Show thin walls).` : ` Nothing under ${c.minWall.toFixed(1)} mm for a ${$("nozzle").value} mm nozzle.`}</li></ul>`;
+}
+$("vWire").addEventListener("input", () => update3d());
+$("vThin").addEventListener("input", () => update3d());
+$("mcRun").onclick = () => { S.mcheck = null; renderModelCheck(); update3d(); renderChecks(); };
+
 /* =========================================================
    Inspect: standard views, section cut, X-ray, edges, 2-point measure
    ========================================================= */
@@ -2576,6 +2651,7 @@ async function rebuild() {
     S.adj = base.kind === "stl" && !base.pocket ? (S.stl.adj || (S.stl.adj = buildAdj(S.stl.tris))) : buildAdj(base.tris);
     selectSurface(S.surfSel);
     writeDims(); refreshArt(true); showMsg(""); S.buildMs = performance.now() - t0; updateInfo();
+    clearTimeout(S.mcTimer); S.mcTimer = setTimeout(() => { if (id !== genId || !S.base) return; try { modelCheck(); renderModelCheck(); renderChecks(); if ($("vThin").checked) update3d(); } catch (e) { console.error(e); } }, 250);
   } catch (e) { if (id !== genId) return; console.error(e); showMsg(e instanceof UserError ? e.message : "Something went wrong building the model: " + e.message); }
   finally { if (id === genId) busy(false); }
 }
