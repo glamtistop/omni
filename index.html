@@ -2636,6 +2636,155 @@ $("pbApply").onclick = async () => {
   $("pbInfo").className = "status ok"; $("pbInfo").textContent = `The model now has ${(M.F.length / 3).toLocaleString()} triangles. Undo (↶) brings back the original.`;
 };
 
+
+/* =========================================================
+   3D model file writers: 3MF, GLB, OBJ, FBX (binary 7.4), USDZ — no libraries, all in the browser
+   ========================================================= */
+const hex2rgb = h => { const n = parseInt(h.replace("#", ""), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+const f6 = v => +(+v).toFixed(6);
+// shared geometry for visual formats: Y-up, centered, mm (GLB converts to metres)
+function visualMesh(M) {
+  const V = M.V, n = V.length / 3; let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9; for (let i = 0; i < n; i++) { x0 = Math.min(x0, V[i * 3]); x1 = Math.max(x1, V[i * 3]); y0 = Math.min(y0, V[i * 3 + 1]); y1 = Math.max(y1, V[i * 3 + 1]); z0 = Math.min(z0, V[i * 3 + 2]); }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, P = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++) { P[i * 3] = V[i * 3] - cx; P[i * 3 + 1] = V[i * 3 + 2] - z0; P[i * 3 + 2] = -(V[i * 3 + 1] - cy); }
+  return { P, shift: [cx, cy, z0] };
+}
+function faceList(M, quads) { if (quads) return toQuads(M); const o = []; for (let i = 0; i < M.F.length; i += 3) o.push([M.F[i], M.F[i + 1], M.F[i + 2]]); return o; }
+// ---- 3MF (Bambu Studio's native format), millimetres, placed on the plate like the STL
+function write3MF(objects, colorHex) {
+  const parts = [], items = [], c = colorHex.replace("#", "").toUpperCase();
+  objects.forEach((o, k) => { const id = k + 2, V = o.V, F = o.F; let vs = "", ts = ""; for (let i = 0; i < V.length; i += 3) vs += `<vertex x="${f6(V[i])}" y="${f6(V[i + 1])}" z="${f6(V[i + 2])}"/>`; for (let i = 0; i < F.length; i += 3) ts += `<triangle v1="${F[i]}" v2="${F[i + 1]}" v3="${F[i + 2]}"/>`;
+    parts.push(`<object id="${id}" name="${esc(o.name)}" type="model" pid="1" pindex="0"><mesh><vertices>${vs}</vertices><triangles>${ts}</triangles></mesh></object>`); items.push(`<item objectid="${id}"/>`); });
+  const model = `<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Application">Omni Part Maker</metadata><metadata name="CreationDate">${new Date().toISOString().slice(0, 10)}</metadata><resources><basematerials id="1"><base name="Filament" displaycolor="#${c}FF"/></basematerials>${parts.join("")}</resources><build>${items.join("")}</build></model>\n`;
+  return zip([{ name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="png" ContentType="image/png"/></Types>\n` },
+    { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>\n` },
+    { name: "3D/3dmodel.model", data: model }]);
+}
+// ---- GLB (binary glTF 2.0), metres, flat-shaded; optional textured "print" primitive
+function writeGLB(M, mat, tex) {
+  const { P } = visualMesh(M), F = M.F, prims = [], bin = [], views = [], accs = [], images = [], textures = [], samplers = [];
+  let off = 0; const addView = (arr, target) => { const b = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength), pad = (4 - b.length % 4) % 4; views.push({ buffer: 0, byteOffset: off, byteLength: b.length, ...(target ? { target } : {}) }); bin.push(b); if (pad) bin.push(new Uint8Array(pad)); off += b.length + pad; return views.length - 1; };
+  const build = (faceIdx, withUV) => { const n = faceIdx.length, pos = new Float32Array(n * 9), nor = new Float32Array(n * 9), uv = withUV ? new Float32Array(n * 6) : null, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+    faceIdx.forEach((f, k) => { const ids = [F[f * 3], F[f * 3 + 1], F[f * 3 + 2]], p = ids.map(i => [P[i * 3] / 1000, P[i * 3 + 1] / 1000, P[i * 3 + 2] / 1000]), u = [0, 1, 2].map(a => p[1][a] - p[0][a]), w = [0, 1, 2].map(a => p[2][a] - p[0][a]), c = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], L = Math.hypot(...c) || 1;
+      for (let j = 0; j < 3; j++) { for (let a = 0; a < 3; a++) { pos[k * 9 + j * 3 + a] = p[j][a]; nor[k * 9 + j * 3 + a] = c[a] / L; mn[a] = Math.min(mn[a], p[j][a]); mx[a] = Math.max(mx[a], p[j][a]); } if (uv) { const t = tex.uv(ids[j], f); uv[k * 6 + j * 2] = t[0]; uv[k * 6 + j * 2 + 1] = t[1]; } } });
+    const a = { POSITION: accs.push({ bufferView: addView(pos, 34962), componentType: 5126, count: n * 3, type: "VEC3", min: mn, max: mx }) - 1, NORMAL: accs.push({ bufferView: addView(nor, 34962), componentType: 5126, count: n * 3, type: "VEC3" }) - 1 };
+    if (uv) a.TEXCOORD_0 = accs.push({ bufferView: addView(uv, 34962), componentType: 5126, count: n * 3, type: "VEC2" }) - 1; return a; };
+  const all = [...Array(F.length / 3).keys()], matsOut = [{ name: "Filament", pbrMetallicRoughness: { baseColorFactor: [...hex2rgb(mat.color), 1], metallicFactor: mat.metallic, roughnessFactor: mat.roughness } }];
+  if (tex) {
+    const imgIdx = name => { const png = tex.maps[name]; if (!png) return null; images.push({ bufferView: addView(png), mimeType: "image/png", name }); textures.push({ source: images.length - 1, sampler: 0 }); return textures.length - 1; };
+    samplers.push({ magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071 });
+    const bc = imgIdx("baseColor"), mr = imgIdx("metallicRoughness"), nm = imgIdx("normal");
+    matsOut.push({ name: "UV print", pbrMetallicRoughness: { baseColorTexture: { index: bc }, metallicFactor: 1, roughnessFactor: 1, ...(mr != null ? { metallicRoughnessTexture: { index: mr } } : {}) }, ...(nm != null ? { normalTexture: { index: nm } } : {}) });
+    const art = all.filter(f => tex.isArt(f)), rest = all.filter(f => !tex.isArt(f));
+    if (rest.length) prims.push({ attributes: build(rest, false), material: 0 }); if (art.length) prims.push({ attributes: build(art, true), material: 1 });
+  } else prims.push({ attributes: build(all, false), material: 0 });
+  const json = { asset: { version: "2.0", generator: "Omni Part Maker" }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: mat.name || "Part" }], meshes: [{ name: mat.name || "Part", primitives: prims }], materials: matsOut, accessors: accs, bufferViews: views, buffers: [{ byteLength: off }], ...(images.length ? { images, textures, samplers } : {}) };
+  const enc = new TextEncoder(); let js = enc.encode(JSON.stringify(json)); const jp = (4 - js.length % 4) % 4; if (jp) { const t = new Uint8Array(js.length + jp).fill(32); t.set(js); js = t; }
+  const total = 12 + 8 + js.length + 8 + off, out = new Uint8Array(total), dv = new DataView(out.buffer); dv.setUint32(0, 0x46546C67, true); dv.setUint32(4, 2, true); dv.setUint32(8, total, true);
+  dv.setUint32(12, js.length, true); dv.setUint32(16, 0x4E4F534A, true); out.set(js, 20); let o = 20 + js.length; dv.setUint32(o, off, true); dv.setUint32(o + 4, 0x004E4942, true); o += 8; for (const b of bin) { out.set(b, o); o += b.length; }
+  return out;
+}
+// ---- OBJ + MTL (Y-up, millimetres); quads kept as quads
+function writeOBJ(M, quads, mat, name, tex) {
+  const { P } = visualMesh(M), faces = faceList(M, quads), lines = [`# Omni Part Maker · ${name} · millimetres, Y up`, `mtllib ${name}.mtl`, `o ${name}`];
+  for (let i = 0; i < P.length; i += 3) lines.push(`v ${f6(P[i])} ${f6(P[i + 1])} ${f6(P[i + 2])}`);
+  let vt = 0; const ft = [];
+  const artFaces = tex ? faces.filter(f => tex.isArtFace(f)) : [], plain = tex ? faces.filter(f => !tex.isArtFace(f)) : faces;
+  if (artFaces.length) { for (const f of artFaces) for (const v of f) { const t = tex.uv(v); lines.push(`vt ${f6(t[0])} ${f6(1 - t[1])}`); } }
+  lines.push("usemtl Filament"); for (const f of plain) lines.push("f " + f.map(v => v + 1).join(" "));
+  if (artFaces.length) { lines.push("usemtl UVPrint"); for (const f of artFaces) lines.push("f " + f.map(v => `${v + 1}/${++vt}`).join(" ")); }
+  const c = hex2rgb(mat.color).map(f6).join(" ");
+  const mtl = [`newmtl Filament`, `Kd ${c}`, `Ks 0.04 0.04 0.04`, `Ns 40`, `Pr ${mat.roughness}`, `Pm ${mat.metallic}`, "", ...(artFaces.length ? [`newmtl UVPrint`, `Kd 1 1 1`, `map_Kd ${name}_baseColor.png`, ...(tex.maps.roughness ? [`map_Pr ${name}_roughness.png`] : []), ...(tex.maps.metallic ? [`map_Pm ${name}_metallic.png`] : []), ...(tex.maps.normal ? [`norm ${name}_normal.png`] : [])] : [])].join("\n") + "\n";
+  return { obj: lines.join("\n") + "\n", mtl };
+}
+// ---- FBX 7.4 binary (no compression), Y-up, centimetre scene with mm unit scale
+function writeFBX(M, quads, mat, name) {
+  const { P } = visualMesh(M), faces = faceList(M, quads), enc = new TextEncoder(), out = [];
+  let size = 0; const put = b => { out.push(b); size += b.length; };
+  const u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; };
+  const prop = { I: v => { const b = new Uint8Array(5); b[0] = 73; new DataView(b.buffer).setInt32(1, v, true); return b; }, L: v => { const b = new Uint8Array(9); b[0] = 76; new DataView(b.buffer).setBigInt64(1, BigInt(v), true); return b; }, D: v => { const b = new Uint8Array(9); b[0] = 68; new DataView(b.buffer).setFloat64(1, v, true); return b; }, C: v => new Uint8Array([67, v ? 1 : 0]),
+    S: v => { const s = typeof v === "string" ? enc.encode(v) : v, b = new Uint8Array(5 + s.length); b[0] = 83; new DataView(b.buffer).setUint32(1, s.length, true); b.set(s, 5); return b; },
+    d: arr => { const b = new Uint8Array(13 + arr.length * 8), dv = new DataView(b.buffer); b[0] = 100; dv.setUint32(1, arr.length, true); dv.setUint32(5, 0, true); dv.setUint32(9, arr.length * 8, true); arr.forEach((v, i) => dv.setFloat64(13 + i * 8, v, true)); return b; },
+    i: arr => { const b = new Uint8Array(13 + arr.length * 4), dv = new DataView(b.buffer); b[0] = 105; dv.setUint32(1, arr.length, true); dv.setUint32(5, 0, true); dv.setUint32(9, arr.length * 4, true); arr.forEach((v, i) => dv.setInt32(13 + i * 4, v, true)); return b; } };
+  // node = [name, [props], [children]]
+  const nodeBytes = (nd, start) => { const [nm, props, kids] = nd, pb = props.map(([t, v]) => prop[t](v)), plen = pb.reduce((a, b) => a + b.length, 0), nmb = enc.encode(nm), head = 13 + nmb.length;
+    const parts = []; let pos = start + head + plen; for (const k of kids || []) { const kb = nodeBytes(k, pos); parts.push(kb); pos += kb.length; } if (kids && kids.length) { parts.push(new Uint8Array(13)); pos += 13; }
+    const b = new Uint8Array(pos - start), dv = new DataView(b.buffer); dv.setUint32(0, pos, true); dv.setUint32(4, props.length, true); dv.setUint32(8, plen, true); b[12] = nmb.length; b.set(nmb, 13); let o = head; for (const p of pb) { b.set(p, o); o += p.length; } for (const p of parts) { b.set(p, o); o += p.length; } return b; };
+  const P70 = list => ["Properties70", [], list.map(([n, t1, t2, f, ...vals]) => ["P", [["S", n], ["S", t1], ["S", t2], ["S", f], ...vals], []])];
+  const sep = s => { const a = enc.encode(s[0]), b = enc.encode(s[1]), r = new Uint8Array(a.length + 2 + b.length); r.set(a); r[a.length] = 0; r[a.length + 1] = 1; r.set(b, a.length + 2); return r; };
+  const verts = []; for (let i = 0; i < P.length; i++) verts.push(P[i] / 10); // cm
+  const pvi = []; for (const f of faces) f.forEach((v, k) => pvi.push(k === f.length - 1 ? -v - 1 : v));
+  const gid = 100001, mid = 100002, matid = 100003, [r, g, b] = hex2rgb(mat.color);
+  const nodes = [
+    ["FBXHeaderExtension", [], [["FBXHeaderVersion", [["I", 1003]], []], ["FBXVersion", [["I", 7400]], []], ["Creator", [["S", "Omni Part Maker"]], []]]],
+    ["GlobalSettings", [], [["Version", [["I", 1000]], []], P70([["UpAxis", "int", "Integer", "", ["I", 1]], ["UpAxisSign", "int", "Integer", "", ["I", 1]], ["FrontAxis", "int", "Integer", "", ["I", 2]], ["FrontAxisSign", "int", "Integer", "", ["I", 1]], ["CoordAxis", "int", "Integer", "", ["I", 0]], ["CoordAxisSign", "int", "Integer", "", ["I", 1]], ["UnitScaleFactor", "double", "Number", "", ["D", 1]]])]],
+    ["Documents", [], [["Count", [["I", 1]], []], ["Document", [["L", 100000], ["S", ""], ["S", "Scene"]], [["RootNode", [["L", 0]], []]]]]],
+    ["References", [], []],
+    ["Definitions", [], [["Version", [["I", 100]], []], ["Count", [["I", 3]], []], ["ObjectType", [["S", "Model"]], [["Count", [["I", 1]], []]]], ["ObjectType", [["S", "Geometry"]], [["Count", [["I", 1]], []]]], ["ObjectType", [["S", "Material"]], [["Count", [["I", 1]], []]]]]],
+    ["Objects", [], [
+      ["Geometry", [["L", gid], ["S", sep([name, "Geometry"])], ["S", "Mesh"]], [["Vertices", [["d", verts]], []], ["PolygonVertexIndex", [["i", pvi]], []], ["GeometryVersion", [["I", 124]], []],
+        ["LayerElementMaterial", [["I", 0]], [["Version", [["I", 101]], []], ["Name", [["S", ""]], []], ["MappingInformationType", [["S", "AllSame"]], []], ["ReferenceInformationType", [["S", "IndexToDirect"]], []], ["Materials", [["i", [0]]], []]]],
+        ["Layer", [["I", 0]], [["Version", [["I", 100]], []], ["LayerElement", [], [["Type", [["S", "LayerElementMaterial"]], []], ["TypedIndex", [["I", 0]], []]]]]]]],
+      ["Model", [["L", mid], ["S", sep([name, "Model"])], ["S", "Mesh"]], [["Version", [["I", 232]], []], P70([["Lcl Scaling", "Lcl Scaling", "", "A", ["D", 1], ["D", 1], ["D", 1]]]), ["Shading", [["C", true]], []], ["Culling", [["S", "CullingOff"]], []]]],
+      ["Material", [["L", matid], ["S", sep(["Filament", "Material"])], ["S", ""]], [["Version", [["I", 102]], []], ["ShadingModel", [["S", "phong"]], []], ["MultiLayer", [["I", 0]], []], P70([["DiffuseColor", "Color", "", "A", ["D", r], ["D", g], ["D", b]], ["Shininess", "double", "Number", "", ["D", 20]]])]]]],
+    ["Connections", [], [["C", [["S", "OO"], ["L", mid], ["L", 0]], []], ["C", [["S", "OO"], ["L", gid], ["L", mid]], []], ["C", [["S", "OO"], ["L", matid], ["L", mid]], []]]]
+  ];
+  const head = new Uint8Array(27); head.set(enc.encode("Kaydara FBX Binary  ")); head[20] = 0; head[21] = 0x1a; head[22] = 0; new DataView(head.buffer).setUint32(23, 7400, true); put(head);
+  for (const nd of nodes) put(nodeBytes(nd, size));
+  put(new Uint8Array(13)); // end of top-level nodes
+  put(new Uint8Array([0xfa, 0xbc, 0xab, 0x09, 0xd0, 0xc8, 0xd4, 0x66, 0xb1, 0x76, 0xfb, 0x83, 0x1c, 0xf7, 0x26, 0x7e])); put(new Uint8Array(4));
+  const pad = (16 - size % 16) % 16; put(new Uint8Array(pad || 16)); put(u32(7400)); put(new Uint8Array(120));
+  put(new Uint8Array([0xf8, 0x5a, 0x8c, 0x6a, 0xde, 0xf5, 0xd9, 0x7e, 0xec, 0xe9, 0x0c, 0xe3, 0x75, 0x8f, 0x29, 0x0b]));
+  const o = new Uint8Array(size); let k = 0; for (const b of out) { o.set(b, k); k += b.length; } return o;
+}
+// ---- USDZ (USDA inside an uncompressed, 64-byte-aligned zip) for iPhone AR Quick Look
+function writeUSDZ(M, quads, mat, name, tex) {
+  const { P } = visualMesh(M), faces = faceList(M, quads), c = hex2rgb(mat.color).map(f6).join(", "), id = name.replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1") || "Part";
+  const pts = []; for (let i = 0; i < P.length; i += 3) pts.push(`(${f6(P[i])}, ${f6(P[i + 1])}, ${f6(P[i + 2])})`);
+  const mesh = (nm, fl, matName, uv) => `        def Mesh "${nm}"\n        {\n            int[] faceVertexCounts = [${fl.map(f => f.length).join(", ")}]\n            int[] faceVertexIndices = [${fl.map(f => f.join(", ")).join(", ")}]\n            point3f[] points = [${pts.join(", ")}]\n${uv ? `            texCoord2f[] primvars:st = [${fl.flatMap(f => f.map(v => { const t = tex.uv(v); return `(${f6(t[0])}, ${f6(1 - t[1])})`; })).join(", ")}] (\n                interpolation = "faceVarying"\n            )\n` : ""}            uniform token subdivisionScheme = "none"\n            rel material:binding = </${id}/Materials/${matName}>\n        }\n`;
+  const artF = tex ? faces.filter(f => tex.isArtFace(f)) : [], plainF = tex ? faces.filter(f => !tex.isArtFace(f)) : faces;
+  const texShader = (k, file, out, type) => `            def Shader "${k}"\n            {\n                uniform token info:id = "UsdUVTexture"\n                asset inputs:file = @textures/${file}@\n                float2 inputs:st.connect = </${id}/Materials/UVPrint/uv.outputs:result>\n                ${type} outputs:${out}\n            }\n`;
+  const usda = `#usda 1.0\n(\n    customLayerData = {\n        string creator = "Omni Part Maker"\n    }\n    defaultPrim = "${id}"\n    metersPerUnit = 0.001\n    upAxis = "Y"\n)\n\ndef Xform "${id}" (\n    kind = "component"\n)\n{\n    def Xform "Geom"\n    {\n${plainF.length ? mesh("Filament", plainF, "Filament", false) : ""}${artF.length ? mesh("UVPrint", artF, "UVPrint", true) : ""}    }\n    def Scope "Materials"\n    {\n        def Material "Filament"\n        {\n            token outputs:surface.connect = </${id}/Materials/Filament/Surface.outputs:surface>\n            def Shader "Surface"\n            {\n                uniform token info:id = "UsdPreviewSurface"\n                color3f inputs:diffuseColor = (${c})\n                float inputs:metallic = ${mat.metallic}\n                float inputs:roughness = ${mat.roughness}\n                token outputs:surface\n            }\n        }\n`
+    + (artF.length ? `        def Material "UVPrint"\n        {\n            token outputs:surface.connect = </${id}/Materials/UVPrint/Surface.outputs:surface>\n            def Shader "uv"\n            {\n                uniform token info:id = "UsdPrimvarReader_float2"\n                string inputs:varname = "st"\n                float2 outputs:result\n            }\n${texShader("baseColorTex", "baseColor.png", "rgb", "float3")}${tex.maps.roughness ? texShader("roughTex", "roughness.png", "r", "float") : ""}${tex.maps.metallic ? texShader("metalTex", "metallic.png", "r", "float") : ""}${tex.maps.normal ? texShader("normalTex", "normal.png", "rgb", "float3").replace('asset inputs:file', 'float4 inputs:scale = (2, 2, 2, 1)\n                float4 inputs:bias = (-1, -1, -1, 0)\n                asset inputs:file') : ""}            def Shader "Surface"\n            {\n                uniform token info:id = "UsdPreviewSurface"\n                color3f inputs:diffuseColor.connect = </${id}/Materials/UVPrint/baseColorTex.outputs:rgb>\n                ${tex.maps.roughness ? `float inputs:roughness.connect = </${id}/Materials/UVPrint/roughTex.outputs:r>` : `float inputs:roughness = 0.4`}\n                ${tex.maps.metallic ? `float inputs:metallic.connect = </${id}/Materials/UVPrint/metalTex.outputs:r>` : `float inputs:metallic = 0`}\n${tex.maps.normal ? `                normal3f inputs:normal.connect = </${id}/Materials/UVPrint/normalTex.outputs:rgb>\n` : ""}                token outputs:surface\n            }\n        }\n` : "")
+    + `    }\n}\n`;
+  const files = [{ name: `${id}.usda`, data: usda }];
+  if (artF.length) for (const [k, f] of [["baseColor", "baseColor.png"], ["roughness", "roughness.png"], ["metallic", "metallic.png"], ["normal", "normal.png"]]) if (tex.maps[k]) files.push({ name: "textures/" + f, data: tex.maps[k] });
+  return zip(files, 64);
+}
+
+
+// one-click 3D model exports
+const FMTS = [["stl", "STL"], ["3mf", "3MF · Bambu"], ["glb", "GLB"], ["obj", "OBJ"], ["fbx", "FBX"], ["usdz", "USDZ · iPhone AR"]];
+$("fmtBtns").innerHTML = FMTS.map(([k, l]) => `<button class="btn small" data-fmt="${k}">${l}</button>`).join("");
+document.querySelectorAll("[data-fmt]").forEach(b => b.onclick = () => exportModel(b.dataset.fmt));
+function modelMaterial() { return { color: S.filament, metallic: 0, roughness: 0.6, name: exportName().name }; }
+async function exportModel(fmt, opts) {
+  const st = $("fmtStatus"); if (!S.base) return; if (S.exporting) { st.textContent = "An export is already running."; return; }
+  if (fmt === "stl" && !polySettings().print) return exportFile("stl", st);
+  S.exporting = new AbortController(); st.className = "status"; st.textContent = `Building ${fmt.toUpperCase()}…`; await new Promise(r => setTimeout(r, 20));
+  try {
+    const name = exportName().name, stamp = stampNow(), d = S.dims, sz = `${n1(d.x)}x${n1(d.y)}x${n1(d.z)}mm`, ps = polySettings(), mat = modelMaterial(), tex = opts && opts.tex ? await opts.tex() : null;
+    let fname, data;
+    if (fmt === "stl" || fmt === "3mf") {
+      const src = ps.print ? fromIndexed(await polyMesh()) : meshReport().clean, W = worldTrisFrom(src), objs = [{ name, ...toIndexed(W) }];
+      if (S.stand && S.stand.tris) { const b = triBBox(W), t = S.stand.tris, o = new Float32Array(t.length), sb = triBBox(t); for (let i = 0; i < t.length; i += 3) { o[i] = t[i] - sb[0] + b[3] + 10; o[i + 1] = t[i + 1] - sb[1] + b[1]; o[i + 2] = t[i + 2] - sb[2]; } objs.push({ name: name + " stand base", ...toIndexed(o) }); }
+      if (fmt === "stl") { const all = new Float32Array(objs.reduce((a, o) => a + o.F.length * 3, 0)); let k = 0; for (const o of objs) { const T = fromIndexed(o); all.set(T, k); k += T.length; } fname = `${name}_${sz}_STL-budget_${stamp}.stl`; data = stlBinary(all); }
+      else { fname = `${name}_${sz}_3MF_${stamp}.3mf`; data = write3MF(objs, S.filament); }
+    } else {
+      const M = await polyMesh(), base = `${name}_${sz}_${ps.target}f${ps.quads ? "-quads" : ""}`;
+      if (fmt === "glb") { fname = `${base}_GLB_${stamp}.glb`; data = writeGLB(M, mat, tex); }
+      if (fmt === "fbx") { fname = `${base}_FBX_${stamp}.fbx`; data = writeFBX(M, ps.quads, mat, name); }
+      if (fmt === "usdz") { fname = `${base}_USDZ_${stamp}.usdz`; data = writeUSDZ(M, ps.quads, mat, name, tex); }
+      if (fmt === "obj") { const o = writeOBJ(M, ps.quads, mat, name, tex), files = [{ name: name + ".obj", data: o.obj }, { name: name + ".mtl", data: o.mtl }]; if (tex) for (const k of ["baseColor", "roughness", "metallic", "normal"]) if (tex.maps[k]) files.push({ name: `${name}_${k}.png`, data: tex.maps[k] }); fname = `${base}_OBJ_${stamp}.zip`; data = zip(files); }
+    }
+    if (data instanceof Blob) data = new Uint8Array(await data.arrayBuffer());
+    const zipIt = dlApi && !/\.zip$/.test(fname), res = zipIt ? await saveFile(fname.replace(/\.\w+$/, ".zip"), zip([{ name: fname, data }])) : await saveFile(fname, data);
+    st.className = res === "saved" ? "status ok" : "status"; st.textContent = res === "saved" ? `Saved ${fname}${zipIt ? " (inside a .zip)" : ""} · ${(data.length / 1024).toFixed(0)} KB.` : res === "declined" ? "Download cancelled." : "Another download is still open. Try again in a moment.";
+    return { fname, data };
+  } catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Export failed."; }
+  finally { S.exporting = null; }
+}
+
 /* =========================================================
    Inspect: standard views, section cut, X-ray, edges, 2-point measure
    ========================================================= */
@@ -2936,17 +3085,18 @@ async function canvasPng(canvas, dpi, ppmX, ppmY) {
   const out = new Uint8Array(buf.length + 21); out.set(buf.subarray(0, 33)); out.set(ch, 33); out.set(buf.subarray(33), 54); return out;
 }
 function b64(u8) { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
-function zip(files) {
+function zip(files, align) {
   const enc = new TextEncoder(), chunks = [], central = []; let off = 0;
   const now = new Date(), time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1), date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
   for (const f of files) {
     const name = enc.encode(f.name), data = typeof f.data === "string" ? enc.encode(f.data) : f.data, crc = crc32(data);
-    const h = new DataView(new ArrayBuffer(30 + name.length));
+    let extra = 0; if (align) { extra = (align - (off + 30 + name.length) % align) % align; if (extra && extra < 4) extra += align; }
+    const h = new DataView(new ArrayBuffer(30 + name.length + extra)); if (extra) { h.setUint16(28, extra, true); h.setUint16(30 + name.length, 0x1986, true); h.setUint16(32 + name.length, extra - 4, true); }
     h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(10, time, true); h.setUint16(12, date, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, name.length, true);
     new Uint8Array(h.buffer).set(name, 30); chunks.push(new Uint8Array(h.buffer), data);
     const c = new DataView(new ArrayBuffer(46 + name.length));
     c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(12, time, true); c.setUint16(14, date, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
-    new Uint8Array(c.buffer).set(name, 46); central.push(new Uint8Array(c.buffer)); off += 30 + name.length + data.length;
+    new Uint8Array(c.buffer).set(name, 46); central.push(new Uint8Array(c.buffer)); off += 30 + name.length + extra + data.length;
   }
   const cd = central.reduce((a, c) => a + c.length, 0), end = new DataView(new ArrayBuffer(22));
   end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, cd, true); end.setUint32(16, off, true);
