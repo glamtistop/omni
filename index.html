@@ -145,6 +145,10 @@ body.panel-off .work { grid-template-columns: minmax(0, 1fr); } body.panel-off .
 .draftbadge { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 12px; border-radius: 999px; background: rgba(10,17,19,.88); border: 1px solid #f2a33a; color: #f6d7a6; font-size: 12.5px; white-space: nowrap; max-width: calc(100% - 20px); }
 .draftbadge b { color: #f2a33a; letter-spacing: .06em; }
 label.check.proto { max-width: 720px; margin: 0 auto 14px; align-items: flex-start; }
+details.help { margin-top: 10px; font-size: 13px; color: var(--muted, #9fb0b3); }
+details.help summary { cursor: pointer; font-weight: 600; color: var(--ink); padding: 4px 0; }
+details.help p { margin: 6px 0; line-height: 1.45; }
+.muted { color: var(--muted, #9fb0b3); font-weight: 400; }
 .dl { position: absolute; transform: translate(-50%, -50%); font: 500 12px var(--font-mono); padding: 2px 7px; border-radius: 6px; background: rgba(7,12,13,.82); white-space: nowrap; border: 1px solid; }
 .dl.x { color: var(--ax-x); border-color: var(--ax-x); } .dl.y { color: var(--ax-y); border-color: var(--ax-y); } .dl.z { color: var(--ax-z); border-color: var(--ax-z); }
 .badge { position: absolute; left: 10px; bottom: 10px; font: 500 12px var(--font-mono); background: rgba(7,12,13,.85); border: 1px solid var(--accent); color: var(--accent); padding: 4px 9px; border-radius: 8px; pointer-events: none; max-width: calc(100% - 20px); }
@@ -747,6 +751,25 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <label class="check"><input type="checkbox" id="pbrView"> Show the PBR material in the 3D viewer (1K preview)</label>
         <div class="btns"><button class="btn small" id="pbrDl">Download PBR maps (.zip)</button></div>
         <p class="status" id="pbrStatus"></p>
+      </section>
+      <section class="card c" id="slicerCard">
+        <h3>⑥ Send to Bambu Studio &amp; xTool</h3>
+        <p class="note">Bambu Studio and xTool Creative Space don't let a web page reach into their print queue, so this does the next best thing: the right files, already named and sized, land in one folder (or open straight in the app) so you skip the export-save-import dance.</p>
+        <div class="btns" id="sqFolderRow"><button class="btn small" id="sqFolder">Choose print folder</button><span class="status" id="sqFolderTxt">No folder yet: files will download.</span></div>
+        <div class="btns">
+          <button class="btn primary small" id="sqBambu">Send 3MF → Bambu Studio</button>
+          <button class="btn primary small" id="sqXtool">Send print image → xTool</button>
+          <button class="btn small" id="sqJob">Send job pack (both + job sheet)</button>
+          <button class="btn small hidden" id="sqShare">Share… (AirDrop / Files)</button>
+        </div>
+        <label class="check hidden" id="sqPauseRow"><input type="checkbox" id="sqPause"> <span>Put the NFC pause into the 3MF for Bambu Studio <span class="muted">(experimental: check the pause marker on the layer slider before printing)</span></span></label>
+        <p class="status" id="sqStatus"></p>
+        <details class="help"><summary>One-time setup so files open by themselves</summary>
+          <p><b>Bambu Studio, Chrome or Edge:</b> after the first 3MF downloads, open the downloads list, click ⋯ next to the file and choose <i>Always open files of this type</i>. From then on every 3MF opens straight in Bambu Studio.</p>
+          <p><b>Mac:</b> in Finder, right-click any .3mf ▸ Get Info ▸ Open with: Bambu Studio ▸ Change All, so double-clicking opens it in Bambu Studio and not another slicer.</p>
+          <p><b>xTool Creative Space:</b> File ▸ Import image and pick the .svg from the print folder. The SVG is sized in real millimetres, so it lands at the exact print size; the PNG carries its ppi too. Follow the size and rotation in the job sheet.</p>
+          <p><b>Print folder:</b> on Chrome or Edge for desktop you can pick a folder once (for example Documents/Print Queue) and the app writes straight into it. Safari and phones don't allow this, so files download instead.</p>
+        </details>
       </section>
       <section class="card c" id="batchCard">
         <h3>③ Batch Production Studio + UV jig</h3>
@@ -2688,14 +2711,14 @@ function visualMesh(M) {
 }
 function faceList(M, quads) { if (quads) return toQuads(M); const o = []; for (let i = 0; i < M.F.length; i += 3) o.push([M.F[i], M.F[i + 1], M.F[i + 2]]); return o; }
 // ---- 3MF (Bambu Studio's native format), millimetres, placed on the plate like the STL
-function write3MF(objects, colorHex) {
+function write3MF(objects, colorHex, extra) {
   const parts = [], items = [], c = colorHex.replace("#", "").toUpperCase();
   objects.forEach((o, k) => { const id = k + 2, V = o.V, F = o.F; let vs = "", ts = ""; for (let i = 0; i < V.length; i += 3) vs += `<vertex x="${f6(V[i])}" y="${f6(V[i + 1])}" z="${f6(V[i + 2])}"/>`; for (let i = 0; i < F.length; i += 3) ts += `<triangle v1="${F[i]}" v2="${F[i + 1]}" v3="${F[i + 2]}"/>`;
     parts.push(`<object id="${id}" name="${esc(o.name)}" type="model" pid="1" pindex="0"><mesh><vertices>${vs}</vertices><triangles>${ts}</triangles></mesh></object>`); items.push(`<item objectid="${id}"/>`); });
   const model = `<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Application">Omni Part Maker</metadata><metadata name="CreationDate">${new Date().toISOString().slice(0, 10)}</metadata><resources><basematerials id="1"><base name="Filament" displaycolor="#${c}FF"/></basematerials>${parts.join("")}</resources><build>${items.join("")}</build></model>\n`;
   return zip([{ name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="png" ContentType="image/png"/></Types>\n` },
     { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>\n` },
-    { name: "3D/3dmodel.model", data: model }]);
+    { name: "3D/3dmodel.model", data: model }, ...(extra || [])]);
 }
 // ---- GLB (binary glTF 2.0), metres, flat-shaded; optional textured "print" primitive
 function writeGLB(M, mat, tex) {
@@ -2806,7 +2829,7 @@ async function exportModel(fmt, opts) {
       const src = ps.print ? fromIndexed(await polyMesh()) : meshReport().clean, W = worldTrisFrom(src), objs = [{ name, ...toIndexed(W) }];
       if (S.stand && S.stand.tris) { const b = triBBox(W), t = S.stand.tris, o = new Float32Array(t.length), sb = triBBox(t); for (let i = 0; i < t.length; i += 3) { o[i] = t[i] - sb[0] + b[3] + 10; o[i + 1] = t[i + 1] - sb[1] + b[1]; o[i + 2] = t[i + 2] - sb[2]; } objs.push({ name: name + " stand base", ...toIndexed(o) }); }
       if (fmt === "stl") { const all = new Float32Array(objs.reduce((a, o) => a + o.F.length * 3, 0)); let k = 0; for (const o of objs) { const T = fromIndexed(o); all.set(T, k); k += T.length; } fname = `${name}_${sz}_STL-budget_${stamp}.stl`; data = stlBinary(all); }
-      else { fname = `${name}_${sz}_3MF_${stamp}.3mf`; data = write3MF(objs, S.filament); }
+      else { fname = `${name}_${sz}_3MF_${stamp}.3mf`; data = write3MF(objs, S.filament, opts && opts.extra3mf); }
     } else {
       const M = await polyMesh(), base = `${name}_${sz}_${ps.target}f${ps.quads ? "-quads" : ""}`;
       if (fmt === "glb") { fname = `${base}_GLB_${stamp}.glb`; data = writeGLB(M, mat, tex); }
@@ -2815,12 +2838,56 @@ async function exportModel(fmt, opts) {
       if (fmt === "obj") { const o = writeOBJ(M, ps.quads, mat, name, tex), files = [{ name: name + ".obj", data: o.obj }, { name: name + ".mtl", data: o.mtl }]; if (tex) for (const k of ["baseColor", "roughness", "metallic", "normal"]) if (tex.maps[k]) files.push({ name: `${name}_${k}.png`, data: tex.maps[k] }); fname = `${base}_OBJ_${stamp}.zip`; data = zip(files); }
     }
     if (data instanceof Blob) data = new Uint8Array(await data.arrayBuffer());
-    const zipIt = dlApi && !/\.zip$/.test(fname), res = zipIt ? await saveFile(fname.replace(/\.\w+$/, ".zip"), zip([{ name: fname, data }])) : await saveFile(fname, data);
+    const zipIt = dlApi && !S.sink && !/\.zip$/.test(fname), res = zipIt ? await saveFile(fname.replace(/\.\w+$/, ".zip"), zip([{ name: fname, data }])) : await saveFile(fname, data);
     st.className = res === "saved" ? "status ok" : "status"; st.textContent = res === "saved" ? `Saved ${fname}${zipIt ? " (inside a .zip)" : ""} · ${(data.length / 1024).toFixed(0)} KB.` : res === "declined" ? "Download cancelled." : "Another download is still open. Try again in a moment.";
     return { fname, data };
   } catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Export failed."; }
   finally { S.exporting = null; }
 }
+
+/* =========================================================
+   Send to slicer: Bambu Studio (3MF) and xTool Creative Space (PNG + SVG), via a print folder or downloads
+   ========================================================= */
+const SQ = { dir: null };
+function sqIdb(mode, fn) { return new Promise((res, rej) => { const o = indexedDB.open("opm-slicer", 1); o.onupgradeneeded = () => o.result.createObjectStore("kv"); o.onerror = () => rej(o.error); o.onsuccess = () => { const tx = o.result.transaction("kv", mode), r = fn(tx.objectStore("kv")); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); }; }); }
+async function sqLoadDir() { try { const h = await sqIdb("readonly", st => st.get("dir")); if (h) { SQ.dir = h; $("sqFolderTxt").textContent = `Print folder: ${h.name} (Chrome will ask once per visit)`; } } catch (e) {} }
+async function sqPerm() { if (!SQ.dir) return false; const o = { mode: "readwrite" }; if ((await SQ.dir.queryPermission(o)) === "granted") return true; return (await SQ.dir.requestPermission(o)) === "granted"; }
+if (window.showDirectoryPicker) {
+  sqLoadDir();
+  $("sqFolder").onclick = async () => { try { SQ.dir = await window.showDirectoryPicker({ id: "opm-print", mode: "readwrite", startIn: "documents" }); await sqIdb("readwrite", st => st.put(SQ.dir, "dir")); $("sqFolderTxt").className = "status ok"; $("sqFolderTxt").textContent = `Print folder: ${SQ.dir.name}`; } catch (e) { if (e.name !== "AbortError") { $("sqFolderTxt").className = "status err"; $("sqFolderTxt").textContent = "Couldn't use that folder."; } } };
+} else { $("sqFolder").classList.add("hidden"); $("sqFolderTxt").textContent = "This browser can't write to a folder, so files download (Chrome or Edge on a computer can)."; }
+function pauseXml(z, layer) { // Bambu Studio / Orca per-layer custom G-code: type 1 = pause
+  return `<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n<plate>\n<plate_info id="1"/>\n<layer top_z="${z.toFixed(3)}" type="1" extruder="1" color="" extra="Insert NFC chip (layer ${layer})" gcode="M400 U1"/>\n<mode value="SingleExtruder"/>\n</plate>\n</custom_gcodes_per_layer>\n`;
+}
+async function sqCollect(fn) { S.sink = []; try { await fn(); return S.sink; } finally { S.sink = null; } }
+async function sqFiles(kind) {
+  const out = [], st = $("sqStatus"), k = S.base.pocket, pause = k && $("sqPause").checked;
+  if (kind !== "xtool") { const f = await sqCollect(() => exportModel("3mf", pause ? { extra3mf: [{ name: "Metadata/custom_gcode_per_layer.xml", data: pauseXml(k.pauseZ, k.pauseLayer) }] } : null)); if (!f.length) throw new UserError($("fmtStatus").textContent || "Couldn't build the 3MF."); out.push(...f); }
+  if (kind !== "bambu") { for (const w of ["png", "svg"]) { const f = await sqCollect(() => exportFile(w, st)); if (!f.length) throw new UserError(st.textContent || "Couldn't build the print image."); out.push(...f); } }
+  if (kind === "job") { const xp = xtoolPlace(), d = S.dims, lines = [`JOB SHEET · ${exportName().name} · ${new Date().toLocaleString()}`, "", `PART: ${d.x.toFixed(2)} × ${d.y.toFixed(2)} × ${d.z.toFixed(2)} mm, ${S.filament} filament${S.stand && S.stand.tris ? " + stand base (second object in the 3MF)" : ""}.`, "",
+      `1. BAMBU STUDIO: open ${out.find(f => /\.3mf$/.test(f.name)).name}. It opens at exact size on the plate.`, ...(k ? [`   NFC: pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer}) and drop the chip in. ${pause ? "The pause is already in the 3MF (experimental): confirm the pause marker on the layer slider before printing." : "Add it on the layer slider: right-click the layer ▸ Add pause."}`] : []), "",
+      `2. XTOOL CREATIVE SPACE: File ▸ Import image ▸ ${out.find(f => /\.svg$/.test(f.name)).name}.`, `   Size ${xp.size}, ratio locked. Rotation ${xp.rot}.`, `   ${xp.up}.`, `   ${xp.place}.`, "", "The print image is exactly the print surface and never bigger than the part."];
+    out.push({ name: `${exportName().name}_JOB-SHEET_${stampNow()}.txt`, data: lines.join("\n") + "\n" }); }
+  return out;
+}
+async function sqDeliver(files, label) {
+  const st = $("sqStatus");
+  if (SQ.dir && await sqPerm()) { for (const f of files) { const h = await SQ.dir.getFileHandle(f.name, { create: true }), w = await h.createWritable(); await w.write(f.data); await w.close(); } st.className = "status ok"; st.textContent = `${label}: wrote ${files.map(f => f.name).join(", ")} to ${SQ.dir.name}.`; return; }
+  let res; if (files.length === 1) res = await saveFile(files[0].name, files[0].data); else res = await saveFile(`${exportName().name}_${label.replace(/\W+/g, "-")}_${stampNow()}.zip`, zip(files));
+  st.className = res === "saved" ? "status ok" : "status"; st.textContent = res === "saved" ? `${label}: downloaded ${files.length === 1 ? files[0].name : files.length + " files in one .zip"}. Open it in the app (see one-time setup below to make this automatic).` : res === "declined" ? "Download cancelled." : "Another download is still open. Try again in a moment.";
+}
+async function sqSend(kind) {
+  const st = $("sqStatus"); if (!S.base || !S.surf) { st.className = "status err"; st.textContent = "Make or import a model first."; return; } if (draftGuard(st)) return;
+  st.className = "status"; st.textContent = "Building files…";
+  try { const files = await sqFiles(kind); await sqDeliver(files, { bambu: "Bambu Studio", xtool: "xTool", job: "Job pack" }[kind]); S.sqLast = files; }
+  catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Couldn't send the files."; }
+}
+$("sqBambu").onclick = () => sqSend("bambu"); $("sqXtool").onclick = () => sqSend("xtool"); $("sqJob").onclick = () => sqSend("job");
+if (navigator.canShare && navigator.canShare({ files: [new File(["x"], "x.txt", { type: "text/plain" })] })) {
+  $("sqShare").classList.remove("hidden");
+  $("sqShare").onclick = async () => { const st = $("sqStatus"); if (!S.base || draftGuard(st)) return; try { st.className = "status"; st.textContent = "Building files…"; const files = await sqFiles("job"); await navigator.share({ files: files.map(f => new File([f.data], f.name, { type: /\.png$/.test(f.name) ? "image/png" : /\.svg$/.test(f.name) ? "image/svg+xml" : /\.txt$/.test(f.name) ? "text/plain" : "application/octet-stream" })), title: exportName().name }); st.className = "status ok"; st.textContent = "Shared."; } catch (e) { if (e.name !== "AbortError") { st.className = "status err"; st.textContent = e.message || "Sharing failed."; } else st.textContent = ""; } };
+}
+function sqUi() { $("sqPauseRow").classList.toggle("hidden", !(S.base && S.base.pocket)); }
 
 /* =========================================================
    Edit mode: select one piece or flat face and change only that section
@@ -3198,7 +3265,7 @@ async function rebuild() {
     S.base = base;
     S.adj = base.kind === "stl" && !base.pocket ? (S.stl.adj || (S.stl.adj = buildAdj(S.stl.tris))) : buildAdj(base.tris);
     selectSurface(S.surfSel);
-    writeDims(); refreshArt(true); showMsg(""); S.buildMs = performance.now() - t0; if (S.draft) S.draftMs = S.buildMs; updateInfo(); draftUi();
+    writeDims(); refreshArt(true); showMsg(""); S.buildMs = performance.now() - t0; if (S.draft) S.draftMs = S.buildMs; updateInfo(); draftUi(); sqUi();
     clearTimeout(S.mcTimer); S.mcTimer = setTimeout(() => { if (id !== genId || !S.base) return; try { modelCheck(); renderModelCheck(); renderChecks(); if ($("vThin").checked) update3d(); } catch (e) { console.error(e); } }, 250);
   } catch (e) { if (id !== genId) return; console.error(e); showMsg(e instanceof UserError ? e.message : "Something went wrong building the model: " + e.message); }
   finally { if (id === genId) busy(false); }
@@ -3521,6 +3588,7 @@ function readme(G, name) {
 }
 let dlApi = null;
 async function saveFile(filename, data) {
+  if (S.sink) { S.sink.push({ name: filename, data: data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data }); return "saved"; }
   if (dlApi) {
     try { await dlApi.save({ filename, data }); return "saved"; }
     catch (e) { if (e && e.code === "declined") return "declined"; if (e && e.code === "rate_limited") return "busy"; if (!(e && ["unavailable", "not_granted", "capability_disabled", "capability_removed"].includes(e.code))) throw new UserError((e && e.message) || "Save failed"); }
@@ -3586,7 +3654,7 @@ async function exportFile(which, statusEl) {
     await new Promise(r => setTimeout(r, 30));
     const chk = exportChecks(), v = chk.v;
     let res, G = printGeom(dpi, bleed, cal), png = null;
-    const stl = () => stlBinary(worldTrisFrom(v.clean)), direct = !dlApi;
+    const stl = () => stlBinary(worldTrisFrom(v.clean)), direct = !dlApi || !!S.sink;
     const standStl = () => { const P = PRINTERS[$("printer").value], t = S.stand.tris, o = new Float32Array(t.length), dx = P[0] / 2 - S.stand.w / 2, dy = P[1] / 2 - S.stand.d / 2; for (let i = 0; i < t.length; i += 3) { o[i] = t[i] + dx; o[i + 1] = t[i + 1] + dy; o[i + 2] = t[i + 2]; } return stlBinary(o); };
     const hasStand = S.stand && S.stand.tris;
     if (["png", "svg", "all"].includes(which)) { const r = await pngTiled(G, "print", prog("Print image"), ctl.signal); png = r.u8; S.lastPng = readPngHeader(png); }
