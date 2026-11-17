@@ -152,6 +152,7 @@ body.panel-off .work { grid-template-columns: minmax(0, 1fr); } body.panel-off .
 .panel { display: grid; gap: 12px; }
 section.c { padding: 14px; display: grid; gap: 12px; }
 section.c h3 { margin: 0; font: 600 15px var(--font-display); display: flex; align-items: center; gap: 8px; }
+section.c h4.sub { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line, rgba(127,127,127,.25)); font: 600 13px var(--font-display); }
 section.c h3 .sp { flex: 1; }
 .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px; }
 .f { display: grid; gap: 4px; font-size: 13px; color: var(--muted); font-weight: 500; }
@@ -712,6 +713,21 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <div class="btns"><button class="btn small" id="pbApply">Apply budget to the model</button></div>
         <div class="btns" id="fmtBtns"></div>
         <p class="status" id="fmtStatus"></p>
+        <h4 class="sub">Textures · PBR maps from your artwork</h4>
+        <p class="note">Base color, metallic, roughness and normal maps made on this device from the print image and filament (nothing is uploaded). These are for 3D previews, renders and AR. The Omni still prints from the print image in card ②.</p>
+        <div class="row">
+          <label class="f" for="pbrRes">Size<select id="pbrRes"><option value="1024">1K · 1024 px</option><option value="2048" selected>2K · 2048 px</option><option value="4096">4K · 4096 px</option></select></label>
+          <label class="f" for="pbrInk">UV ink finish<select id="pbrInk"><option value="matte">Matte</option><option value="satin" selected>Satin</option><option value="gloss">Gloss (varnish)</option></select></label>
+        </div>
+        <div class="row">
+          <label class="f" for="pbrFil">Filament<select id="pbrFil"><option value="basic" selected>Basic PLA</option><option value="matte">Matte PLA</option><option value="silk">Silk / metallic PLA</option></select></label>
+          <label class="f" for="pbrMetal">Metallic ink<select id="pbrMetal"><option value="none" selected>None</option><option value="tones">Gold &amp; silver colors in the art</option><option value="all">Whole print (foil look)</option></select></label>
+        </div>
+        <label class="f" for="pbrRelief">Surface relief from artwork <b id="pbrReliefVal">30%</b><input type="range" id="pbrRelief" min="0" max="100" step="5" value="30"></label>
+        <label class="check"><input type="checkbox" id="pbrExport" checked> Include the maps in GLB, OBJ and USDZ exports (FBX, STL and 3MF stay color only)</label>
+        <label class="check"><input type="checkbox" id="pbrView"> Show the PBR material in the 3D viewer (1K preview)</label>
+        <div class="btns"><button class="btn small" id="pbrDl">Download PBR maps (.zip)</button></div>
+        <p class="status" id="pbrStatus"></p>
       </section>
       <section class="card c" id="batchCard">
         <h3>③ Batch Production Studio + UV jig</h3>
@@ -1733,11 +1749,11 @@ function drawArtLayer(ctx, art, mode) {
 }
 function look() { return { bgFill: $("bgFill").value, bg1: $("bg1").value, bg2: $("bg2").value, grad: $("grad").checked, border: $("border").value, borderW: Math.max(0, +$("borderW").value || 0) }; }
 // the print image for the selected surface, in surface millimetres (u right, v down)
-function renderSurface(dpi, bleed, maxSide) {
+function renderSurface(dpi, bleed, maxSide, cap) {
   const sf = S.surf, lk = look();
   let s = dpi / 25.4; const wmm = sf.W + 2 * bleed, hmm = sf.H + 2 * bleed;
   const lim = maxSide || 9000; if (Math.max(wmm, hmm) * s > lim) s = lim / Math.max(wmm, hmm);
-  if (wmm * hmm * s * s > 16e6) s = Math.sqrt(16e6 / (wmm * hmm));
+  const area = cap || 16e6; if (wmm * hmm * s * s > area) s = Math.sqrt(area / (wmm * hmm));
   const w = Math.max(1, Math.round(wmm * s)), h = Math.max(1, Math.round(hmm * s));
   const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d");
   const T = [s, 0, 0, s, bleed * s, bleed * s]; ctx.setTransform(...T);
@@ -2010,12 +2026,12 @@ function update3d() {
   }
   const M = transformMatrix(); V.root.matrixAutoUpdate = false; V.root.matrix.copy(M); V.root.updateMatrixWorld(true);
   const mk = (pos, uvs) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); if (uvs) g.setAttribute("uv", new THREE.BufferAttribute(uvs, 2)); g.computeVertexNormals(); return g; };
-  V.sideMat = new THREE.MeshStandardMaterial({ color: S.filament, roughness: 0.75, metalness: 0 });
+  V.sideMat = new THREE.MeshStandardMaterial({ color: S.filament, roughness: 0.75, metalness: 0 }); if ($("pbrView") && $("pbrView").checked) { const f = FIL_FIN[$("pbrFil").value] || FIL_FIN.basic; V.sideMat.roughness = f.r; V.sideMat.metalness = f.m; }
   V.root.add(new THREE.Mesh(mk(pr2), V.sideMat));
   if (na) {
     let mat;
     if (S.step === "measure" || !pr) mat = new THREE.MeshStandardMaterial({ color: 0xc8f26d, roughness: 0.6, emissive: 0x2a3a10 });
-    else { const tex = new THREE.CanvasTexture(composeFace(pr)); tex.anisotropy = V.r.capabilities.getMaxAnisotropy(); mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 }); }
+    else mat = pbrViewerMaterial(pr) || (() => { const tex = new THREE.CanvasTexture(composeFace(pr)); tex.anisotropy = V.r.capabilities.getMaxAnisotropy(); return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 }); })();
     V.root.add(new THREE.Mesh(mk(pa, uv), mat));
   }
   // surface outline
@@ -2741,7 +2757,7 @@ function writeFBX(M, quads, mat, name) {
 function writeUSDZ(M, quads, mat, name, tex) {
   const { P } = visualMesh(M), faces = faceList(M, quads), c = hex2rgb(mat.color).map(f6).join(", "), id = name.replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1") || "Part";
   const pts = []; for (let i = 0; i < P.length; i += 3) pts.push(`(${f6(P[i])}, ${f6(P[i + 1])}, ${f6(P[i + 2])})`);
-  const mesh = (nm, fl, matName, uv) => `        def Mesh "${nm}"\n        {\n            int[] faceVertexCounts = [${fl.map(f => f.length).join(", ")}]\n            int[] faceVertexIndices = [${fl.map(f => f.join(", ")).join(", ")}]\n            point3f[] points = [${pts.join(", ")}]\n${uv ? `            texCoord2f[] primvars:st = [${fl.flatMap(f => f.map(v => { const t = tex.uv(v); return `(${f6(t[0])}, ${f6(1 - t[1])})`; })).join(", ")}] (\n                interpolation = "faceVarying"\n            )\n` : ""}            uniform token subdivisionScheme = "none"\n            rel material:binding = </${id}/Materials/${matName}>\n        }\n`;
+  const mesh = (nm, fl, matName, uv) => `        def Mesh "${nm}" (\n            prepend apiSchemas = ["MaterialBindingAPI"]\n        )\n        {\n            int[] faceVertexCounts = [${fl.map(f => f.length).join(", ")}]\n            int[] faceVertexIndices = [${fl.map(f => f.join(", ")).join(", ")}]\n            point3f[] points = [${pts.join(", ")}]\n${uv ? `            texCoord2f[] primvars:st = [${fl.flatMap(f => f.map(v => { const t = tex.uv(v); return `(${f6(t[0])}, ${f6(1 - t[1])})`; })).join(", ")}] (\n                interpolation = "faceVarying"\n            )\n` : ""}            uniform token subdivisionScheme = "none"\n            rel material:binding = </${id}/Materials/${matName}>\n        }\n`;
   const artF = tex ? faces.filter(f => tex.isArtFace(f)) : [], plainF = tex ? faces.filter(f => !tex.isArtFace(f)) : faces;
   const texShader = (k, file, out, type) => `            def Shader "${k}"\n            {\n                uniform token info:id = "UsdUVTexture"\n                asset inputs:file = @textures/${file}@\n                float2 inputs:st.connect = </${id}/Materials/UVPrint/uv.outputs:result>\n                ${type} outputs:${out}\n            }\n`;
   const usda = `#usda 1.0\n(\n    customLayerData = {\n        string creator = "Omni Part Maker"\n    }\n    defaultPrim = "${id}"\n    metersPerUnit = 0.001\n    upAxis = "Y"\n)\n\ndef Xform "${id}" (\n    kind = "component"\n)\n{\n    def Xform "Geom"\n    {\n${plainF.length ? mesh("Filament", plainF, "Filament", false) : ""}${artF.length ? mesh("UVPrint", artF, "UVPrint", true) : ""}    }\n    def Scope "Materials"\n    {\n        def Material "Filament"\n        {\n            token outputs:surface.connect = </${id}/Materials/Filament/Surface.outputs:surface>\n            def Shader "Surface"\n            {\n                uniform token info:id = "UsdPreviewSurface"\n                color3f inputs:diffuseColor = (${c})\n                float inputs:metallic = ${mat.metallic}\n                float inputs:roughness = ${mat.roughness}\n                token outputs:surface\n            }\n        }\n`
@@ -2756,8 +2772,8 @@ function writeUSDZ(M, quads, mat, name, tex) {
 // one-click 3D model exports
 const FMTS = [["stl", "STL"], ["3mf", "3MF · Bambu"], ["glb", "GLB"], ["obj", "OBJ"], ["fbx", "FBX"], ["usdz", "USDZ · iPhone AR"]];
 $("fmtBtns").innerHTML = FMTS.map(([k, l]) => `<button class="btn small" data-fmt="${k}">${l}</button>`).join("");
-document.querySelectorAll("[data-fmt]").forEach(b => b.onclick = () => exportModel(b.dataset.fmt));
-function modelMaterial() { return { color: S.filament, metallic: 0, roughness: 0.6, name: exportName().name }; }
+document.querySelectorAll("[data-fmt]").forEach(b => b.onclick = () => exportModel(b.dataset.fmt, /^(glb|obj|usdz)$/.test(b.dataset.fmt) && $("pbrExport").checked && S.surf ? { tex: pbrTexture } : null));
+function modelMaterial() { const f = FIL_FIN[$("pbrFil").value] || FIL_FIN.basic; return { color: S.filament, metallic: f.m, roughness: f.r, name: exportName().name }; }
 async function exportModel(fmt, opts) {
   const st = $("fmtStatus"); if (!S.base) return; if (S.exporting) { st.textContent = "An export is already running."; return; }
   if (fmt === "stl" && !polySettings().print) return exportFile("stl", st);
@@ -2783,6 +2799,100 @@ async function exportModel(fmt, opts) {
     return { fname, data };
   } catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Export failed."; }
   finally { S.exporting = null; }
+}
+
+/* =========================================================
+   PBR texture maps (base color, metallic, roughness, normal) made from the artwork, on this device
+   ========================================================= */
+const INK_FIN = { matte: 0.8, satin: 0.45, gloss: 0.12 };
+const FIL_FIN = { basic: { m: 0, r: 0.6 }, matte: { m: 0, r: 0.85 }, silk: { m: 0.6, r: 0.3 } };
+function pbrSettings() { return { res: +$("pbrRes").value, ink: INK_FIN[$("pbrInk").value] ?? 0.45, fil: FIL_FIN[$("pbrFil").value] || FIL_FIN.basic, metal: $("pbrMetal").value, relief: (+$("pbrRelief").value || 0) / 100 }; }
+function metalTone(r, g, b) { // gold / silver detection by color, 0..1
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), v = mx / 255, sat = mx ? (mx - mn) / mx : 0; if (v < 0.4) return 0;
+  let h = 0; if (mx !== mn) { if (mx === r) h = 60 * (((g - b) / (mx - mn)) % 6); else if (mx === g) h = 60 * ((b - r) / (mx - mn) + 2); else h = 60 * ((r - g) / (mx - mn) + 4); } if (h < 0) h += 360;
+  if (h >= 30 && h <= 58 && sat >= 0.25 && sat <= 0.85 && v >= 0.5) return 1; // gold
+  if (sat < 0.1 && v >= 0.6 && v <= 0.93) return 0.9; // silver
+  return 0;
+}
+// Builds every map at `res` px on the longest side (exact, never silently smaller) and hands each to emit(name, ImageData) one at a time.
+async function pbrBuild(res, emit) {
+  const sf = S.surf; if (!sf) throw new UserError("Pick a surface first.");
+  const st = pbrSettings(), long = Math.max(sf.W, sf.H), pr = renderSurface(res * 25.4 / long, 0, res, res * res), w = pr.canvas.width, h = pr.canvas.height;
+  if (Math.max(w, h) < res - 1) throw new UserError(`This device couldn't make ${res} px maps.`);
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d", { willReadFrequently: true });
+  g.fillStyle = S.filament; g.fillRect(0, 0, w, h); g.drawImage(pr.canvas, 0, 0); const base = g.getImageData(0, 0, w, h), bd = base.data;
+  const ink = pr.canvas.getContext("2d").getImageData(0, 0, w, h).data, n = w * h, Hf = new Float32Array(n), R = new Uint8ClampedArray(n), Mt = new Uint8ClampedArray(n);
+  let inked = 0;
+  for (let i = 0; i < n; i++) {
+    const a = ink[i * 4 + 3] / 255; if (a > 0) inked++; const r = bd[i * 4], gg = bd[i * 4 + 1], b = bd[i * 4 + 2], lum = (0.2126 * r + 0.7152 * gg + 0.0722 * b) / 255; bd[i * 4 + 3] = 255;
+    const m = st.metal === "all" ? 1 : st.metal === "tones" ? metalTone(r, gg, b) : 0;
+    R[i] = 255 * Math.min(1, Math.max(0.04, st.fil.r * (1 - a) + (m ? Math.min(st.ink, 0.35) : st.ink) * a + (lum - 0.5) * 0.08 * st.relief * a));
+    Mt[i] = 255 * (st.fil.m * (1 - a) + m * a); Hf[i] = a * 0.5 + st.relief * a * lum;
+  }
+  emit("baseColor", base); await new Promise(r => setTimeout(r, 0));
+  const one = (fill) => { const im = new ImageData(w, h), d = im.data; for (let i = 0; i < n; i++) { fill(d, i); d[i * 4 + 3] = 255; } return im; };
+  emit("roughness", one((d, i) => { d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = R[i]; }));
+  emit("metallic", one((d, i) => { d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = Mt[i]; }));
+  emit("metallicRoughness", one((d, i) => { d[i * 4] = 255; d[i * 4 + 1] = R[i]; d[i * 4 + 2] = Mt[i]; })); // glTF packing: G roughness, B metallic
+  await new Promise(r => setTimeout(r, 0));
+  // normal map (OpenGL / glTF convention, +Y toward the top of the image) from a Sobel of the height field
+  const k = (1.5 + 6 * st.relief) * res / 1024 / 8, nm = new ImageData(w, h), d = nm.data, at = (x, y) => Hf[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1)) - (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1)), dy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1)) - (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1));
+    let nx = -dx * k, ny = dy * k, nz = 1; const L = Math.hypot(nx, ny, nz); nx /= L; ny /= L; nz /= L; const o = (y * w + x) * 4;
+    d[o] = (nx * 0.5 + 0.5) * 255; d[o + 1] = (ny * 0.5 + 0.5) * 255; d[o + 2] = (nz * 0.5 + 0.5) * 255; d[o + 3] = 255;
+  }
+  emit("normal", nm);
+  const src = S.art && S.art.img ? Math.max(S.art.img.naturalWidth || S.art.img.width || 0, S.art.img.naturalHeight || S.art.img.height || 0) : 0;
+  return { w, h, src, inked };
+}
+async function imageDataPng(im) { const c = document.createElement("canvas"); c.width = im.width; c.height = im.height; c.getContext("2d").putImageData(im, 0, 0); const b = await new Promise(r => c.toBlob(r, "image/png")); if (!b) throw new UserError("This device couldn't encode a texture that large. Try 2K."); c.width = c.height = 1; return new Uint8Array(await b.arrayBuffer()); }
+async function pbrPngs(res) { const maps = {}, jobs = []; const info = await pbrBuild(res, (k, im) => jobs.push(imageDataPng(im).then(p => { maps[k] = p; }))); await Promise.all(jobs); return { maps, ...info }; }
+function inLoops(loops, x, y) { let c = false; for (const l of loops) for (let i = 0, j = l.length - 2; i < l.length; j = i, i += 2) { const yi = l[i + 1], yj = l[j + 1]; if ((yi > y) !== (yj > y) && x < (l[j] - l[i]) * (y - yi) / (yj - yi) + l[i]) c = !c; } return c; }
+// texture binding for an export mesh M (indexed, model coordinates): which faces carry the print, and their UVs
+function pbrBind(M, maps) {
+  const sf = S.surf, V = M.V, uvOf = i => { const x = V[i * 3], y = V[i * 3 + 1], z = V[i * 3 + 2]; return [x * sf.right[0] + y * sf.right[1] + z * sf.right[2] - sf.u0, -(x * sf.up[0] + y * sf.up[1] + z * sf.up[2]) - sf.v0]; };
+  const test = ids => {
+    const p = ids.slice(0, 3).map(i => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]]), u = [0, 1, 2].map(a => p[1][a] - p[0][a]), w = [0, 1, 2].map(a => p[2][a] - p[0][a]), c = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], L = Math.hypot(...c); if (!L) return false;
+    const nd = (c[0] * sf.n[0] + c[1] * sf.n[1] + c[2] * sf.n[2]) / L; if (sf.isProj) return nd > 0.25;
+    if (nd < 0.985) return false; const off = p[0][0] * sf.n[0] + p[0][1] * sf.n[1] + p[0][2] * sf.n[2]; if (off < sf.d - 0.05) return false;
+    let cu = 0, cv = 0; for (const i of ids) { const t = uvOf(i); cu += t[0]; cv += t[1]; } return inLoops(sf.loops, cu / ids.length, cv / ids.length);
+  };
+  const nf = M.F.length / 3, art = new Uint8Array(nf); for (let f = 0; f < nf; f++) art[f] = test([M.F[f * 3], M.F[f * 3 + 1], M.F[f * 3 + 2]]) ? 1 : 0;
+  return { maps, isArt: f => !!art[f], isArtFace: test, uv: i => { const t = uvOf(i); return [t[0] / sf.W, t[1] / sf.H]; }, artFaces: art.reduce((a, b) => a + b, 0) };
+}
+async function pbrTexture() {
+  const M = await polyMesh(), st = $("fmtStatus"), res = pbrSettings().res; st.textContent = `Making ${res} px PBR maps…`; await new Promise(r => setTimeout(r, 20));
+  const t0 = performance.now(), p = await pbrPngs(res); if (!p.inked) return null; const tex = pbrBind(M, p.maps); if (!tex.artFaces) return null; S.lastPbr = { ms: performance.now() - t0, w: p.w, h: p.h }; return tex;
+}
+$("pbrRelief").addEventListener("input", () => { $("pbrReliefVal").textContent = $("pbrRelief").value + "%"; pbrPreviewSoon(); });
+for (const id of ["pbrInk", "pbrFil", "pbrMetal"]) $(id).addEventListener("change", () => { pbrPreviewSoon(); if (id === "pbrFil") update3d(); });
+$("pbrView").addEventListener("change", () => { S.pbrPrev = null; if ($("pbrView").checked) pbrPreviewSoon(); else update3d(); });
+$("pbrDl").onclick = async () => {
+  const st = $("pbrStatus"); if (!S.surf) { st.className = "status err"; st.textContent = "Make or import a model first."; return; }
+  const res = pbrSettings().res; st.className = "status"; st.textContent = `Making ${res} px maps…`; await new Promise(r => setTimeout(r, 20));
+  try {
+    const t0 = performance.now(), p = await pbrPngs(res), name = exportName().name, stamp = stampNow(), files = [];
+    for (const k of ["baseColor", "metallic", "roughness", "normal", "metallicRoughness"]) files.push({ name: `${name}_${k}_${p.w}x${p.h}.png`, data: p.maps[k] });
+    const note = `Omni Part Maker · PBR texture maps\n${name} · surface ${n1(S.surf.W)} × ${n1(S.surf.H)} mm · maps ${p.w} × ${p.h} px\n\nbaseColor: print image over the filament color (sRGB)\nmetallic, roughness: greyscale, linear (white = 1)\nnormal: tangent space, OpenGL / glTF convention (+Y up)\nmetallicRoughness: glTF packed (G = roughness, B = metallic)\n\nUV: u = across the surface, v = down the surface, 0..1 covering exactly ${n1(S.surf.W)} × ${n1(S.surf.H)} mm.\n${p.src && p.src < Math.max(p.w, p.h) ? `Your artwork is ${p.src} px, so these ${Math.max(p.w, p.h)} px maps are upscaled from it.\n` : ""}These maps are for 3D previews and renders. They are not the Omni manufacturing print file.\n`;
+    files.push({ name: "README.txt", data: note });
+    const fname = `${name}_PBR-${res >= 4096 ? "4K" : res >= 2048 ? "2K" : "1K"}_${stamp}.zip`, data = zip(files), r = await saveFile(fname, data);
+    st.className = r === "saved" ? "status ok" : "status"; st.textContent = r === "saved" ? `Saved ${fname} · ${p.w} × ${p.h} px · ${((data.size || data.length) / 1048576).toFixed(1)} MB · ${((performance.now() - t0) / 1000).toFixed(1)} s${p.src && p.src < Math.max(p.w, p.h) ? ` · artwork is ${p.src} px, so detail is upscaled` : ""}.` : r === "declined" ? "Download cancelled." : "Another download is still open. Try again in a moment.";
+  } catch (e) { console.error(e); st.className = "status err"; st.textContent = e.message || "Couldn't make the maps."; }
+};
+// viewer preview at 1K
+let pbrTimer = 0;
+function pbrPreviewSoon() { if (!$("pbrView").checked) return; clearTimeout(pbrTimer); pbrTimer = setTimeout(pbrPreview, 120); }
+async function pbrPreview() {
+  if (!$("pbrView").checked || !S.surf || !S.lastPreview) return; const src = S.lastPreview, out = {};
+  try { await pbrBuild(1024, (k, im) => { if (k === "baseColor" || k === "metallicRoughness" || k === "normal") { const c = document.createElement("canvas"); c.width = im.width; c.height = im.height; c.getContext("2d").putImageData(im, 0, 0); out[k] = c; } }); }
+  catch (e) { $("pbrStatus").className = "status err"; $("pbrStatus").textContent = e.message || "Preview failed."; return; }
+  S.pbrPrev = { src, ...out }; update3d();
+}
+function pbrViewerMaterial(pr) {
+  const p = S.pbrPrev; if (!$("pbrView").checked || !p) return null; if (p.src !== pr) { pbrPreviewSoon(); return null; }
+  const t = c => { const x = new THREE.CanvasTexture(c); x.anisotropy = V.r.capabilities.getMaxAnisotropy(); return x; }, map = t(p.baseColor), mr = t(p.metallicRoughness);
+  return new THREE.MeshStandardMaterial({ map, roughnessMap: mr, metalnessMap: mr, roughness: 1, metalness: 1, normalMap: t(p.normal), normalScale: new THREE.Vector2(1, 1) });
 }
 
 /* =========================================================
@@ -3745,6 +3855,14 @@ const TESTS = [
     const c = tcan(2000, 2000, g => { g.fillStyle = "#2f6fd6"; g.beginPath(); g.ellipse(1000, 1000, 900, 700, 0.3, 0, Math.PI * 2); g.fill(); g.fillStyle = "#fff"; g.fillRect(700, 800, 600, 400); });
     const t0 = performance.now(), A = prepareArt(c, "auto", 18), m = await tBuildArt(A, 80, 3), ms = performance.now() - t0;
     return [ms < 60000 && tMeshOk(m), `${Math.round(ms)} ms from image to a closed ${tDims(m.bb).map(v => v.toFixed(1)).join(" × ")} mm STL (${m.v.triangles} triangles)`];
+  }],
+  ["PBR textures · only the print surface gets the maps (never the lip)", async () => {
+    const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 95, 95, 2), M = toIndexed(m.r.tris), keep = S.surf;
+    try {
+      S.surf = surfaceFrom(m.r.tris, buildAdj(m.r.tris), pickTop(m.r.tris, m.r.floorZ)); const tex = pbrBind(M, {}), V = M.V; let area = 0, high = 0, uvOk = true;
+      for (let f = 0; f < M.F.length / 3; f++) { if (!tex.isArt(f)) continue; const id = [M.F[f * 3], M.F[f * 3 + 1], M.F[f * 3 + 2]], p = id.map(i => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]]); area += Math.hypot(...[0, 1, 2].map(a => { const u = p[1].map((v, k) => v - p[0][k]), w = p[2].map((v, k) => v - p[0][k]); return [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]][a]; })) / 2; if (p.some(q => q[2] > m.r.floorZ + 0.01)) high++; for (const i of id) { const t = tex.uv(i); if (t[0] < -0.01 || t[0] > 1.01 || t[1] < -0.01 || t[1] > 1.01) uvOk = false; } }
+      return [high === 0 && uvOk && Math.abs(area - S.surf.area) / S.surf.area < 0.01, `${area.toFixed(0)} of ${S.surf.area.toFixed(0)} mm² of the floor carries the texture, ${high} lip faces, UVs ${uvOk ? "inside 0–1" : "out of range"}`];
+    } finally { S.surf = keep; }
   }],
   ["8b · coaster with 2 mm raised lip", async () => {
     const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 95, 95, 2), d = tDims(m.bb);
