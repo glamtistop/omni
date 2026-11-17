@@ -701,6 +701,18 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <button class="btn small" id="xTpl">Surface template .svg</button>
         </div>
       </section>
+      <section class="card c" id="modelFilesCard">
+        <h3>⑤ 3D model files · polygon budget</h3>
+        <label class="f" for="pbTarget">Polygon budget <b id="pbVal">10,000</b> faces<input type="range" id="pbTarget" min="3000" max="10000" step="500" value="10000"></label>
+        <div class="row">
+          <label class="f" for="pbFaces">Faces<select id="pbFaces"><option value="tri">Triangles</option><option value="quad">Quads where flat (OBJ, FBX, USDZ)</option></select></label>
+        </div>
+        <label class="check"><input type="checkbox" id="pbPrint"> Also use the budget for the print files (STL, 3MF). Off = print files keep every triangle for exact size.</label>
+        <p class="status" id="pbInfo"></p>
+        <div class="btns"><button class="btn small" id="pbApply">Apply budget to the model</button></div>
+        <div class="btns" id="fmtBtns"></div>
+        <p class="status" id="fmtStatus"></p>
+      </section>
       <section class="card c" id="batchCard">
         <h3>③ Batch Production Studio + UV jig</h3>
         <p class="note">Make 25–100+ of this part at once. Leave the list empty for identical items, or put one name per line to personalize the lettering on each.</p>
@@ -2519,6 +2531,111 @@ $("vWire").addEventListener("input", () => update3d());
 $("vThin").addEventListener("input", () => update3d());
 $("mcRun").onclick = () => { S.mcheck = null; renderModelCheck(); update3d(); renderChecks(); };
 
+
+/* =========================================================
+   Polygon budget: indexed mesh, quadric decimation, edge-split refinement, quad pairing
+   ========================================================= */
+function toIndexed(T) {
+  const map = new Map(), V = [], F = [];
+  for (let i = 0; i < T.length; i += 3) { const k = Math.round(T[i] * 1e4) + "," + Math.round(T[i + 1] * 1e4) + "," + Math.round(T[i + 2] * 1e4); let v = map.get(k); if (v === undefined) { v = V.length / 3; map.set(k, v); V.push(T[i], T[i + 1], T[i + 2]); } F.push(v); }
+  const G = []; for (let t = 0; t < F.length; t += 3) if (F[t] !== F[t + 1] && F[t + 1] !== F[t + 2] && F[t] !== F[t + 2]) G.push(F[t], F[t + 1], F[t + 2]);
+  return { V: Float64Array.from(V), F: Int32Array.from(G) };
+}
+function fromIndexed(M) { const o = new Float32Array(M.F.length * 3); for (let i = 0; i < M.F.length; i++) { o[i * 3] = M.V[M.F[i] * 3]; o[i * 3 + 1] = M.V[M.F[i] * 3 + 1]; o[i * 3 + 2] = M.V[M.F[i] * 3 + 2]; } return o; }
+// Garland–Heckbert quadric edge collapse with manifold (link) and flip checks
+function decimate(M, target) {
+  const V = Array.from(M.V), nv = V.length / 3, F = Array.from(M.F), nf = F.length / 3, alive = new Uint8Array(nf).fill(1), Q = new Float64Array(nv * 10), vf = Array.from({ length: nv }, () => []);
+  const nrm = f => { const a = F[f * 3], b = F[f * 3 + 1], c = F[f * 3 + 2], ux = V[b * 3] - V[a * 3], uy = V[b * 3 + 1] - V[a * 3 + 1], uz = V[b * 3 + 2] - V[a * 3 + 2], vx = V[c * 3] - V[a * 3], vy = V[c * 3 + 1] - V[a * 3 + 1], vz = V[c * 3 + 2] - V[a * 3 + 2]; const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, L = Math.hypot(nx, ny, nz); return L < 1e-14 ? [0, 0, 0, 0] : [nx / L, ny / L, nz / L, L]; };
+  for (let f = 0; f < nf; f++) { for (let k = 0; k < 3; k++) vf[F[f * 3 + k]].push(f); const n = nrm(f), a = F[f * 3], d = -(n[0] * V[a * 3] + n[1] * V[a * 3 + 1] + n[2] * V[a * 3 + 2]), w = n[3]; const q = [n[0] * n[0], n[0] * n[1], n[0] * n[2], n[0] * d, n[1] * n[1], n[1] * n[2], n[1] * d, n[2] * n[2], n[2] * d, d * d];
+    for (let k = 0; k < 3; k++) { const v = F[f * 3 + k]; for (let j = 0; j < 10; j++) Q[v * 10 + j] += q[j] * w; } }
+  const err = (q, x, y, z) => q[0] * x * x + 2 * q[1] * x * y + 2 * q[2] * x * z + 2 * q[3] * x + q[4] * y * y + 2 * q[5] * y * z + 2 * q[6] * y + q[7] * z * z + 2 * q[8] * z + q[9];
+  const best = (a, b) => { const q = []; for (let j = 0; j < 10; j++) q.push(Q[a * 10 + j] + Q[b * 10 + j]); const cands = [[(V[a * 3] + V[b * 3]) / 2, (V[a * 3 + 1] + V[b * 3 + 1]) / 2, (V[a * 3 + 2] + V[b * 3 + 2]) / 2], [V[a * 3], V[a * 3 + 1], V[a * 3 + 2]], [V[b * 3], V[b * 3 + 1], V[b * 3 + 2]]];
+    const A = [[q[0], q[1], q[2]], [q[1], q[4], q[5]], [q[2], q[5], q[7]]], det = A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+    if (Math.abs(det) > 1e-10) { const bb = [-q[3], -q[6], -q[8]], s = (r, c, v) => { const m = A.map(x => x.slice()); for (let i = 0; i < 3; i++) m[i][c] = v[i]; return m; }, D = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+      const p = [D(s(0, 0, bb)) / det, D(s(0, 1, bb)) / det, D(s(0, 2, bb)) / det]; const seg = Math.hypot(V[a * 3] - V[b * 3], V[a * 3 + 1] - V[b * 3 + 1], V[a * 3 + 2] - V[b * 3 + 2]), mid = cands[0]; if (Math.hypot(p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]) < seg * 2) cands.unshift(p); }
+    let bc = null, be = 1e300; for (const c of cands) { const e = err(q, c[0], c[1], c[2]); if (e < be) { be = e; bc = c; } } return [Math.max(0, be), bc]; };
+  // heap of edges
+  const heap = [], ver = new Int32Array(nv), push = it => { heap.push(it); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } }, pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = i * 2 + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+  const nbrs = v => { const s = new Set(); for (const f of vf[v]) if (alive[f]) for (let k = 0; k < 3; k++) { const w = F[f * 3 + k]; if (w !== v) s.add(w); } return s; };
+  const seen = new Set(); for (let f = 0; f < nf; f++) for (let k = 0; k < 3; k++) { const a = F[f * 3 + k], b = F[f * 3 + (k + 1) % 3], key = a < b ? a * nv + b : b * nv + a; if (seen.has(key)) continue; seen.add(key); const [e, p] = best(a, b); push([e, a, b, ver[a], ver[b], p]); }
+  let faces = nf, maxErr = 0;
+  while (faces > target && heap.length) {
+    const [e, a, b, va, vb, p] = pop(); if (ver[a] !== va || ver[b] !== vb) continue;
+    const Na = nbrs(a), Nb = nbrs(b); if (!Na.has(b)) continue; let common = 0; for (const x of Na) if (Nb.has(x)) common++; if (common !== 2) continue; // keeps the surface a manifold
+    // reject collapses that flip or squash a neighbouring face
+    let bad = false; const old = [V[a * 3], V[a * 3 + 1], V[a * 3 + 2]];
+    for (const v of [a, b]) for (const f of vf[v]) { if (!alive[f]) continue; const fa = F[f * 3], fb = F[f * 3 + 1], fc = F[f * 3 + 2]; if ((fa === a || fb === a || fc === a) && (fa === b || fb === b || fc === b)) continue; const n0 = nrm(f), sv = [V[v * 3], V[v * 3 + 1], V[v * 3 + 2]]; V[v * 3] = p[0]; V[v * 3 + 1] = p[1]; V[v * 3 + 2] = p[2]; const n1 = nrm(f); V[v * 3] = sv[0]; V[v * 3 + 1] = sv[1]; V[v * 3 + 2] = sv[2]; if (n1[3] < Math.max(1e-6, n0[3] * 1e-3) || n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2] < 0.5) { bad = true; break; } if (bad) break; }
+    if (bad) continue;
+    V[a * 3] = p[0]; V[a * 3 + 1] = p[1]; V[a * 3 + 2] = p[2]; for (let j = 0; j < 10; j++) Q[a * 10 + j] += Q[b * 10 + j];
+    for (const f of vf[b]) { if (!alive[f]) continue; let hasA = false; for (let k = 0; k < 3; k++) if (F[f * 3 + k] === a) hasA = true; if (hasA) { alive[f] = 0; faces--; } else { for (let k = 0; k < 3; k++) if (F[f * 3 + k] === b) F[f * 3 + k] = a; vf[a].push(f); } }
+    vf[b] = []; ver[a]++; ver[b]++; maxErr = Math.max(maxErr, e);
+    for (const w of nbrs(a)) { const [e2, p2] = best(a, w); push([e2, a, w, ver[a], ver[w], p2]); }
+  }
+  const remap = new Int32Array(nv).fill(-1), NV = [], NF = []; for (let f = 0; f < nf; f++) if (alive[f]) for (let k = 0; k < 3; k++) { const v = F[f * 3 + k]; if (remap[v] < 0) { remap[v] = NV.length / 3; NV.push(V[v * 3], V[v * 3 + 1], V[v * 3 + 2]); } NF.push(remap[v]); }
+  return { V: Float64Array.from(NV), F: Int32Array.from(NF), err: Math.sqrt(maxErr) };
+}
+// add faces without changing the shape: split the longest edges (both neighbours together, so it stays closed)
+function refine(M, target) {
+  let V = Array.from(M.V), F = Array.from(M.F);
+  while (F.length / 3 < target) {
+    const em = new Map(), edges = [], nf = F.length / 3;
+    for (let f = 0; f < nf; f++) for (let k = 0; k < 3; k++) { const a = F[f * 3 + k], b = F[f * 3 + (k + 1) % 3], key = a < b ? a + "," + b : b + "," + a; let e = em.get(key); if (!e) { e = { a: Math.min(a, b), b: Math.max(a, b), f: [] }; em.set(key, e); edges.push(e); } e.f.push(f); }
+    const len = e => Math.hypot(V[e.a * 3] - V[e.b * 3], V[e.a * 3 + 1] - V[e.b * 3 + 1], V[e.a * 3 + 2] - V[e.b * 3 + 2]); edges.sort((x, y) => len(y) - len(x));
+    const used = new Uint8Array(nf), add = []; let need = target - nf;
+    for (const e of edges) { if (need <= 0) break; if (e.f.length !== 2 || e.f.some(f => used[f])) continue; const m = V.length / 3; V.push((V[e.a * 3] + V[e.b * 3]) / 2, (V[e.a * 3 + 1] + V[e.b * 3 + 1]) / 2, (V[e.a * 3 + 2] + V[e.b * 3 + 2]) / 2);
+      for (const f of e.f) { used[f] = 1; const t = [F[f * 3], F[f * 3 + 1], F[f * 3 + 2]], i = t.findIndex((v, k) => (v === e.a && t[(k + 1) % 3] === e.b) || (v === e.b && t[(k + 1) % 3] === e.a)), p = t[i], q = t[(i + 1) % 3], r = t[(i + 2) % 3]; F[f * 3] = p; F[f * 3 + 1] = m; F[f * 3 + 2] = r; add.push(m, q, r); } need -= 2; }
+    if (!add.length) break; F = F.concat(add);
+  }
+  return { V: Float64Array.from(V), F: Int32Array.from(F), err: 0 };
+}
+// pair neighbouring coplanar triangles into convex quads (for OBJ / FBX / USD)
+function toQuads(M) {
+  const F = M.F, V = M.V, nf = F.length / 3, em = new Map(), paired = new Int32Array(nf).fill(-1), faces = [];
+  for (let f = 0; f < nf; f++) for (let k = 0; k < 3; k++) { const a = F[f * 3 + k], b = F[f * 3 + (k + 1) % 3], key = a < b ? a + "," + b : b + "," + a; (em.get(key) || em.set(key, []).get(key)).push([f, k]); }
+  const n = f => { const a = F[f * 3], b = F[f * 3 + 1], c = F[f * 3 + 2], u = [0, 1, 2].map(i => V[b * 3 + i] - V[a * 3 + i]), w = [0, 1, 2].map(i => V[c * 3 + i] - V[a * 3 + i]), x = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], L = Math.hypot(...x) || 1; return x.map(v => v / L); };
+  const order = [...em.values()].filter(l => l.length === 2).sort((p, q) => { const L = l => { const [f, k] = l[0], a = F[f * 3 + k], b = F[f * 3 + (k + 1) % 3]; return Math.hypot(V[a * 3] - V[b * 3], V[a * 3 + 1] - V[b * 3 + 1], V[a * 3 + 2] - V[b * 3 + 2]); }; return L(q) - L(p); });
+  for (const [[f, k], [g, j]] of order) { if (paired[f] >= 0 || paired[g] >= 0) continue; const nf1 = n(f), ng = n(g); if (nf1[0] * ng[0] + nf1[1] * ng[1] + nf1[2] * ng[2] < 0.9995) continue;
+    const a = F[f * 3 + k], b = F[f * 3 + (k + 1) % 3], c = F[f * 3 + (k + 2) % 3], d = F[g * 3 + (j + 2) % 3], quad = [a, d, b, c];
+    // convex check: every corner turns the same way around the normal
+    let ok = true; for (let i = 0; i < 4; i++) { const p = quad[i], q = quad[(i + 1) % 4], r = quad[(i + 2) % 4], u = [0, 1, 2].map(x => V[q * 3 + x] - V[p * 3 + x]), w = [0, 1, 2].map(x => V[r * 3 + x] - V[q * 3 + x]), cr = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]; if (cr[0] * nf1[0] + cr[1] * nf1[1] + cr[2] * nf1[2] <= 1e-12) { ok = false; break; } }
+    if (!ok) continue; paired[f] = g; paired[g] = f; faces.push(quad); }
+  for (let f = 0; f < nf; f++) if (paired[f] < 0) faces.push([F[f * 3], F[f * 3 + 1], F[f * 3 + 2]]);
+  return faces;
+}
+// the mesh used for 3D-model exports at the chosen budget
+function budgetMesh(T, target) {
+  const M = toIndexed(T), nf = M.F.length / 3;
+  if (nf > target) return { ...decimate(M, target), from: nf, how: "reduced" };
+  if (nf < target) return { ...refine(M, target), from: nf, how: "refined" };
+  return { ...M, err: 0, from: nf, how: "unchanged" };
+}
+
+
+// polygon budget settings + preview
+function polySettings() { return { target: +$("pbTarget").value || 10000, quads: $("pbFaces").value === "quad", print: $("pbPrint").checked }; }
+function polyInfo() {
+  if (!S.base) return; const n = allTris().length / 9, t = polySettings().target; $("pbVal").textContent = t.toLocaleString();
+  $("pbInfo").className = "status"; $("pbInfo").textContent = `This part has ${n.toLocaleString()} triangles. 3D-model exports use ${t.toLocaleString()} ${polySettings().quads ? "faces (flat areas as quads)" : "triangles"}: ${n > t ? "reduced with quadric simplification (shape-preserving, stays watertight)" : n < t ? "extra faces added by splitting edges (shape unchanged)" : "unchanged"}.${polySettings().print ? " Print files use the budget too." : " STL/3MF keep the exact mesh."}`;
+}
+let polyCache = null;
+async function polyMesh() { // cached budget mesh for the current model
+  const T = allTris(), s = polySettings(), key = T.length + ":" + T[0] + ":" + T[T.length - 1] + ":" + s.target;
+  if (polyCache && polyCache.key === key) return polyCache.M;
+  $("pbInfo").textContent = "Fitting the polygon budget…"; await new Promise(r => setTimeout(r, 20));
+  const t0 = performance.now(), M = budgetMesh(T, s.target); M.ms = performance.now() - t0; polyCache = { key, M };
+  const v = validateMesh(fromIndexed(M)); $("pbInfo").className = v.ok ? "status ok" : "status err";
+  $("pbInfo").textContent = `${M.from.toLocaleString()} → ${(M.F.length / 3).toLocaleString()} triangles (${M.how}, largest shape change ≈ ${M.err < 0.001 ? "<0.001" : M.err.toFixed(3)} mm) in ${(M.ms / 1000).toFixed(1)} s · ${v.ok ? "watertight" : "not watertight"}.`;
+  return M;
+}
+for (const id of ["pbTarget", "pbFaces", "pbPrint"]) $(id).addEventListener("input", polyInfo);
+$("pbApply").onclick = async () => {
+  if (!S.base) return; const M = await polyMesh(), T = fromIndexed(M), b = triBBox(T);
+  for (let i = 0; i < T.length; i += 3) { T[i] -= b[0]; T[i + 1] -= b[1]; T[i + 2] -= b[2]; }
+  const st = { tris: T, name: (S.stl && S.spec.kind === "stl" ? S.stl.name : exportName().name) + "-" + (M.F.length / 3) + "f", nat: { x: b[3] - b[0], y: b[4] - b[1], z: b[5] - b[2] } };
+  const keepText = $("ltText").value, keepArt = S.artImg; await importStlObject(st); $("ltText").value = keepText; S.artImg = keepArt; scheduleArt(); go("export");
+  $("pbInfo").className = "status ok"; $("pbInfo").textContent = `The model now has ${(M.F.length / 3).toLocaleString()} triangles. Undo (↶) brings back the original.`;
+};
+
 /* =========================================================
    Inspect: standard views, section cut, X-ray, edges, 2-point measure
    ========================================================= */
@@ -3081,7 +3198,7 @@ function xtoolPlace() {
 }
 function exportNotes() {
   if (!S.surf) return;
-  try { batchSummary(); priceUpdate(); } catch (e) { console.error(e); }
+  try { batchSummary(); priceUpdate(); polyInfo(); } catch (e) { console.error(e); }
   const P = PRINTERS[$("printer").value], bleed = +$("bleed").value || 0, dpi = +$("dpi").value;
   $("xStlNote").textContent = `${fmtU(S.dims.x)} × ${fmtU(S.dims.y)} × ${fmtU(S.dims.z)}, positioned for the ${P[3]}. Print it in ${filamentName(S.filament)}.`;
   const xp = xtoolPlace();
