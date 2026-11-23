@@ -318,6 +318,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
       <button class="btn primary" id="asisBtn" disabled>Make 3D from my image</button>
       <button class="btn" id="textBtn">Make text part</button>
     </div>
+    <p class="note hidden" id="pinCreateNote"></p>
     <p class="note">Credit-free: everything in Model, Measure, Design, Preview, Export, Print and Saved runs in your browser with no Claude AI. Parts are flat or raised-relief (2.5D) shapes from your image. Fully sculpted 360° models need a separate 3D modeling tool.</p>
     <p class="status" id="cStatus"></p>
   </div>
@@ -456,7 +457,9 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <div class="btns">
           <button class="btn small" id="lockBtn" aria-pressed="true">🔒 Proportions locked</button>
           <button class="btn small" id="resetBtn">↺ Reset</button>
+          <button class="btn small" id="pinBtn" aria-pressed="false">📌 Keep this size for new images</button>
         </div>
+        <p class="status ok hidden" id="pinNote"></p>
         <p class="note" id="dimNote">Overall size, including the key ring tab and raised details. This is what Bambu Studio will show.</p>
       </section>
 
@@ -957,12 +960,12 @@ const FILAMENTS = [["White","#f4f4f0"],["Black","#1d1d1f"],["Gray","#8a8d91"],["
 const PRINTERS = { a1mini: [180,180,180,"A1 mini"], a1: [256,256,256,"A1"], p1: [256,256,256,"P1S / P1P"], x1: [256,256,256,"X1C / X1E"], h2d: [350,320,325,"H2D"] };
 const OMNI_BED = { std: [330,122], large: [330,420] };
 const PRODUCTS = {
-  keychain:  { label: "Keychain",  kind: "cutout", x: 55, y: 35, z: 3, ring: "top", margin: 0, driver: "x" },
-  bagtag:    { label: "Bag tag",   kind: "cutout", x: 55, y: 76, z: 3.5, ring: "top", margin: 0, driver: "y" },
-  nameplate: { label: "Nameplate", kind: "shape", shape: "rounded", x: 120, y: 35, z: 4, ring: "none", radius: 5 },
+  keychain:  { label: "Keychain",  kind: "cutout", x: 55, y: 35, z: 4.2, ring: "top", margin: 0, driver: "x" },
+  bagtag:    { label: "Bag tag",   kind: "cutout", x: 55, y: 76, z: 4.2, ring: "top", margin: 0, driver: "y" },
+  nameplate: { label: "Nameplate", kind: "shape", shape: "rounded", x: 120, y: 35, z: 4.2, ring: "none", radius: 5 },
   coaster:   { label: "Coaster",   kind: "shape", shape: "oval", x: 99.98, y: 99.99, z: 6, ring: "none", lip: true },
-  ornament:  { label: "Ornament",  kind: "shape", shape: "oval", x: 75, y: 75, z: 3, ring: "top" },
-  magnet:    { label: "Magnet",    kind: "shape", shape: "rounded", x: 60, y: 40, z: 3, ring: "none", radius: 4 },
+  ornament:  { label: "Ornament",  kind: "shape", shape: "oval", x: 75, y: 75, z: 4.2, ring: "top" },
+  magnet:    { label: "Magnet",    kind: "shape", shape: "rounded", x: 60, y: 40, z: 4.2, ring: "none", radius: 4 },
   sign:      { label: "Sign / plaque", kind: "shape", shape: "rounded", x: 150, y: 100, z: 5, ring: "none", radius: 6 }
 };
 const S = {
@@ -1521,6 +1524,16 @@ async function genBase() {
   const t = Math.max(0.6, d.z - Math.max(fh, lipH));
   let src = null;
   if (sp.kind === "cutout") { src = cutSource(); if (!src) throw new UserError("Add an image or some lettering in Design so the outline has something to follow."); }
+  if (boxOn() && sp.kind === "cutout") {
+    const B = S.box; d.z = B.z; const tb = Math.max(0.6, B.z - Math.max(fh, lipH));
+    if (bgBoxOn()) { // exactly the pinned size: rounded plate (same key ring) with the background color, artwork fitted inside
+      const sq = { ...sp, kind: "shape", shape: "rounded", radius: +sp.radius || 4 }, dd = { x: B.x, y: B.y, z: B.z };
+      const r = await buildBase(sq, dd, false, "x", null, tb); d.x = B.x; d.y = B.y; r.bgBox = true; return r;
+    }
+    let dd = { x: B.x, y: B.y, z: B.z }, r = await buildBase(sp, dd, true, "x", src, tb); // fit inside X × Y, no stretching
+    if (dd.y > B.y + 0.02) { dd = { x: B.x, y: B.y, z: B.z }; r = await buildBase(sp, dd, true, "y", src, tb); }
+    d.x = dd.x; d.y = dd.y; return r;
+  }
   return await buildBase(sp, d, S.lock, S.driver, src, t);
 }
 
@@ -1738,7 +1751,8 @@ function getMode() { return document.querySelector('input[name="pmode"]:checked'
 function setMode(m) { document.querySelector(`input[name="pmode"][value="${m}"]`).checked = true; }
 function placementOpts() {
   const onTop = S.base && S.base.kind === "shape" && S.surf && S.surf.isTop && S.surfSel === "top" && !(S.spec.ring !== "none" && $("pTab").checked);
-  return { mode: getMode(), rot: +$("pRot").value || 0, stretch: $("pStretch").checked, ox: u2mm(+$("pOx").value || 0), oy: u2mm(+$("pOy").value || 0), inset: Math.max(0, u2mm(+$("pInset").value || 0)), inner: onTop ? S.base.inner : null, body: onTop ? S.base.body : null, keepW: S.keepW, keepH: S.keepH };
+  const m0 = getMode(), mode = S.base && S.base.bgBox && (m0 === "cover" || m0 === "snap") ? "contain" : m0; // background plate: whole artwork fitted inside, never cropped
+  return { mode, rot: +$("pRot").value || 0, stretch: $("pStretch").checked, ox: u2mm(+$("pOx").value || 0), oy: u2mm(+$("pOy").value || 0), inset: Math.max(0, u2mm(+$("pInset").value || 0)), inner: onTop ? S.base.inner : null, body: onTop ? S.base.body : null, keepW: S.keepW, keepH: S.keepH };
 }
 function containBox(sf, o) {
   if (o.inner) { const r = o.inner; return { x: r.x * sf.W, y: r.y * sf.H, w: r.w * sf.W, h: r.h * sf.H }; }
@@ -3409,7 +3423,9 @@ function busy(on) { $("busy").classList.toggle("show", on); }
 function showMsg(t) { const m = $("msg"); m.textContent = t; m.classList.toggle("show", !!t); }
 function writeDims() {
   const st = S.units === "in" ? 0.01 : 0.1;
-  for (const k of ["x", "y", "z"]) { const el = $("d" + k.toUpperCase()); if (document.activeElement !== el) el.value = +mm2u(S.dims[k]).toFixed(S.units === "in" ? 3 : 2); el.step = st; }
+  const shown = boxOn() ? S.box : S.dims;
+  for (const k of ["x", "y", "z"]) { const el = $("d" + k.toUpperCase()); if (document.activeElement !== el) el.value = +mm2u(shown[k]).toFixed(S.units === "in" ? 3 : 2); el.step = st; }
+  pinUi();
   for (const k of ["x", "y", "z"]) { const el = $("p" + k.toUpperCase()); if (document.activeElement !== el) el.value = +mm2u(S.pos[k]).toFixed(S.units === "in" ? 3 : 1); }
   for (const k of ["x", "y", "z"]) { const el = $("r" + k.toUpperCase()); if (document.activeElement !== el) el.value = S.rot[k]; }
   $("dimUnitNote").textContent = S.units;
@@ -3497,7 +3513,25 @@ function syncModelControls() {
   $("mOutline").value = sp.kind === "cutout" ? "follow" : sp.shape; $("mRing").value = sp.ring; $("mMargin").value = sp.margin; $("mRadius").value = sp.radius; $("mHole").value = sp.holeD; $("mFill").checked = sp.fillHoles; $("mRingDx").value = sp.ringDx || 0; $("mRingDy").value = sp.ringDy || 0;
   $("mLip").checked = !!sp.lip; $("mLipH").value = sp.lipH || 2; $("mLipW").value = sp.lipW || 3;
 }
+/* pinned size: X × Y × Z kept for every new image (saved on this device) */
+S.box = (() => { try { const v = JSON.parse(localStorage.getItem("omni-size-box") || "null"); if (v && v.x > 0 && v.y > 0 && v.z > 0) return v; } catch (e) {} return { on: false, x: 55, y: 35, z: 4.2 }; })();
+function saveBox() { try { localStorage.setItem("omni-size-box", JSON.stringify(S.box)); } catch (e) {} }
+const boxOn = () => !!(S.box && S.box.on && S.spec && S.spec.kind !== "stl");
+const bgBoxOn = () => boxOn() && S.spec.kind === "cutout" && $("bgFill").value === "ink"; // background color chosen: the part is exactly the pinned size
+function pinUi() {
+  const b = S.box, on = !!b.on, txt = `${n1(b.x)} × ${n1(b.y)} × ${n1(b.z)} mm`;
+  $("pinBtn").setAttribute("aria-pressed", on); $("pinBtn").textContent = on ? `📌 Size kept: ${txt}` : "📌 Keep this size for new images";
+  $("pinCreateNote").classList.toggle("hidden", !on); $("pinCreateNote").textContent = on ? `New parts use your kept size: ${txt} (change it under Exact dimensions).` : "";
+  const pn = $("pinNote"); pn.classList.toggle("hidden", !on || !S.spec || S.spec.kind === "stl");
+  if (on && S.spec && S.spec.kind !== "stl") {
+    const fit = S.spec.kind === "cutout" && !bgBoxOn(), act = `${n1(S.dims.x)} × ${n1(S.dims.y)} mm`;
+    pn.textContent = bgBoxOn() ? `The part is exactly ${n1(b.x)} × ${n1(b.y)} mm with your background color filling it; the artwork is fitted inside without stretching.`
+      : fit ? `The part fits inside ${n1(b.x)} × ${n1(b.y)} mm without stretching the artwork: actual size ${act}. Choose a background color (Design ▸ Base color & background) to fill the full ${n1(b.x)} × ${n1(b.y)} mm.`
+      : `The part is ${n1(b.x)} × ${n1(b.y)} × ${n1(b.z)} mm.`;
+  }
+}
 function startModel(spec, dims, lock, driver, viaOutline) {
+  if (S.box && S.box.on && spec.kind !== "stl") dims = { x: S.box.x, y: S.box.y, z: S.box.z };
   histButtons(); if (spec.kind !== "stl") S.draft = $("protoMode").checked; S.draftMs = null; S.base = null; S.surf = null; S.lastPreview = null; S.spec = spec; S.dims = { ...dims }; S.dims0 = { ...dims }; S.lock = lock; S.driver = driver || "x"; S.surfSel = "top"; S.keepW = 0;
   S.rot = { x: 0, y: 0, z: 0 }; const P = PRINTERS[$("printer").value]; S.pos = { x: P[0] / 2, y: P[1] / 2, z: 0 };
   $("pOx").value = 0; $("pOy").value = 0; S.nameEdited = false;
@@ -4651,6 +4685,7 @@ async function importStlObject(st, draft) {
 // dimensions
 function setDim(k, v) {
   if (!(v > 0) || !S.spec) return;
+  if (boxOn()) { S.box[k] = +(+v).toFixed(3); saveBox(); if (S.spec.kind === "shape") { S.dims[k] = S.box[k]; } else if (k === "z") S.dims.z = S.box.z; pinUi(); writeDims(); scheduleGeo(); return; }
   if (S.lock && k !== "z" && S.spec.kind === "shape" && (S.spec.ring !== "none" || standStem(S.spec))) return setDimKeepTab(k, v);
   const old = { ...S.dims };
   S.dims[k] = v;
@@ -4663,7 +4698,13 @@ function setDim(k, v) {
 for (const k of ["x", "y", "z"]) $("d" + k.toUpperCase()).addEventListener("input", e => setDim(k, u2mm(parseFloat(e.target.value))));
 document.querySelectorAll(".stp .sb").forEach(b => b.addEventListener("click", () => { const k = b.dataset.k, step = u2mm(+$("dStep").value || 1) * (+b.dataset.s); setDim(k, Math.max(k === "z" ? 0.6 : 1, +(S.dims[k] + step).toFixed(3))); }));
 $("lockBtn").onclick = () => setLock(!S.lock);
-$("resetBtn").onclick = () => { if (S.dims0) { S.dims = { ...S.dims0 }; writeDims(); scheduleGeo(true); } };
+$("pinBtn").onclick = () => {
+  if (S.box.on) S.box.on = false; else { const d = S.dims || S.box; S.box = { on: true, x: +(+d.x).toFixed(2), y: +(+d.y).toFixed(2), z: +(+d.z).toFixed(2) }; }
+  saveBox(); pinUi(); writeDims(); if (S.spec && S.spec.kind === "cutout") scheduleGeo(true);
+};
+$("bgFill").addEventListener("input", () => { if (boxOn() && S.spec.kind === "cutout") { setMode($("bgFill").value === "ink" ? "contain" : "cover"); scheduleGeo(); } });
+pinUi();
+$("resetBtn").onclick = () => { if (boxOn()) return; if (S.dims0) { S.dims = { ...S.dims0 }; writeDims(); scheduleGeo(true); } };
 for (const k of ["x", "y", "z"]) {
   $("p" + k.toUpperCase()).addEventListener("input", e => { const v = u2mm(parseFloat(e.target.value)); if (!isFinite(v)) return; S.pos[k] = k === "z" ? Math.max(0, v) : v; update3d(); renderChecks(); updateInfo(); });
   $("r" + k.toUpperCase()).addEventListener("input", e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; S.rot[k] = v; update3d(); renderChecks(); updateInfo(); });
