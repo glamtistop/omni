@@ -37,6 +37,7 @@ html, body { margin: 0; height: 100%; }
 .xbox { margin-top: 10px; padding: 12px 14px; border: 2px solid var(--accent); border-radius: 14px; display: grid; gap: 6px; }
 .xbox-t { font: 600 13px var(--font-display); color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
 .xbox-v { display: flex; flex-wrap: wrap; gap: 18px; font: 600 clamp(22px, 4vw, 30px) var(--font-display); } .xbox-v b { font-variant-numeric: tabular-nums; }
+.smlist { margin: 8px 0 0; padding-left: 20px; line-height: 1.5; font-size: 14px; } .smlist li { margin: 2px 0; }
 .xbox-n { font-size: 13px; color: var(--muted); } .xbox .btn { justify-self: start; }
 body { background: radial-gradient(900px 500px at 15% -10%, rgba(44,156,184,.28), transparent 60%), radial-gradient(700px 400px at 100% 0%, rgba(200,242,109,.07), transparent 60%), var(--bg); background-attachment: fixed; color: var(--ink); font: 15px/1.45 var(--font-body); }
 button { font-family: inherit; }
@@ -503,8 +504,8 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <select id="printer">
             <option value="a1mini">A1 mini · 180 × 180 × 180 mm</option>
             <option value="a1">A1 · 256 × 256 × 256 mm</option>
-            <option value="p1" selected>P1S / P1P · 256 × 256 × 256 mm</option>
-            <option value="x1">X1C / X1E · 256 × 256 × 256 mm</option>
+            <option value="p1">P1S / P1P · 256 × 256 × 256 mm</option>
+            <option value="x1" selected>X1C / X1E · 256 × 256 × 256 mm</option>
             <option value="h2d">H2D · 350 × 320 × 325 mm</option>
           </select>
         </label>
@@ -588,7 +589,11 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <div class="row">
             <label class="f" for="nfcD">Pocket diameter<span class="unit" data-unit="mm"><input type="number" id="nfcD" min="5" max="120" step="0.5" value="26"></span></label>
             <label class="f" for="nfcH">Pocket depth<span class="unit" data-unit="mm"><input type="number" id="nfcH" min="0.2" max="10" step="0.1" value="1.2"></span></label>
-            <label class="f" for="nfcCover">Plastic above chip<span class="unit" data-unit="mm"><input type="number" id="nfcCover" min="0.4" max="5" step="0.1" value="1.2"></span></label>
+            <label class="f" for="nfcCover">Plastic above chip<span class="unit" data-unit="mm"><input type="number" id="nfcCover" min="0.4" max="5" step="0.1" value="1.6"></span></label>
+          </div>
+          <div class="row">
+            <label class="f" for="nfcTopL">Top layers over chip (plus 1 bridge layer)<input type="number" id="nfcTopL" min="1" max="30" step="1" value="7" inputmode="numeric"></label>
+            <label class="f" for="nfcWall">Plastic around chip<span class="unit" data-unit="mm"><input type="number" id="nfcWall" min="0.8" max="10" step="0.1" value="2"></span></label>
           </div>
           <div class="row">
             <label class="f" for="nfcLayer">Bambu layer height<select id="nfcLayer"><option value="0.08">0.08 mm</option><option value="0.12">0.12 mm</option><option value="0.16">0.16 mm</option><option value="0.2" selected>0.20 mm</option><option value="0.24">0.24 mm</option><option value="0.28">0.28 mm</option></select></label>
@@ -601,7 +606,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           </div>
           <div class="btns"><button class="btn small" id="nfcTap" aria-pressed="false">Tap the model to place the chip</button></div>
           <p class="status" id="nfcInfo"></p>
-          <p class="note">The pocket is sealed inside the part, in the middle of the part unless you pick another spot. It's lined up with your layer height so the pause lands exactly on top of it, and always gets enough plastic above (one bridge layer + 5 top layers) and around it (2 mm) for Bambu to print it as one solid, seamless piece. Shown as a dashed outline in the 3D view.</p>
+          <p class="note">The pocket is sealed inside the part, in the middle of the part unless you pick another spot. It's lined up with your layer height so the pause lands exactly on top of it, and always gets at least 1 bridge layer + your top layers above it (7 by default) and your wall around it (2 mm by default), so Bambu prints it as one solid, seamless piece. Set Bambu Studio's Top shell layers to the same number (see Smooth top for UV on the Export step). Shown as a dashed outline in the 3D view.</p>
         </div>
       </section>
 
@@ -740,6 +745,16 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <h3>① Bambu · 3D base</h3>
         <p class="note" id="xStlNote"></p>
         <div class="btns"><button class="btn primary" id="xStl">Download STL (.zip)</button><button class="btn hidden" id="xStand">Stand base STL</button></div>
+      </section>
+      <section class="card c" id="smoothCard">
+        <h3>Smooth top for UV · Bambu Studio settings</h3>
+        <div class="row">
+          <label class="f" for="smPrinter">Printer<select id="smPrinter"><option value="x1">X1C</option><option value="h2d">H2D</option></select></label>
+          <label class="f" for="smFil">Filament<select id="smFil"><option value="pla">PLA Basic</option><option value="matte">PLA Matte</option><option value="petg">PETG (HF / Basic)</option><option value="abs">ABS / ASA</option><option value="silk">PLA Silk</option></select></label>
+        </div>
+        <ol class="smlist" id="smList"></ol>
+        <div class="btns"><button class="btn small" id="smCopy">Copy settings</button></div>
+        <p class="note">Set these in Bambu Studio's <b>Process</b> panel (turn on <b>Advanced</b>; you can also right-click the part ▸ add settings so they apply to this part only). Ironing numbers are proven starting points: if the top looks rough or pillowy, print a MakerWorld "ironing calibration" test once with your filament and use the best square.</p>
       </section>
       <section class="card c">
         <h3>② Omni · print image</h3>
@@ -1477,22 +1492,43 @@ function partMiddle(base, bb) {
   if (!base.lip && base.frame && base.frame.aw0) { const f = base.frame, r = f.rect; return { x: bb[0] + (r.x + r.w / 2) / f.aw0 * W, y: bb[1] + (1 - (r.y + r.h / 2) / f.ah0) * H }; }
   return { x: (bb[0] + bb[3]) / 2, y: (bb[1] + bb[4]) / 2 };
 }
+function pocketNeedZ(nf) { const L = +nf.layer || 0.2, topL = clamp(Math.round(+nf.topL || 7), 1, 30), depth = Math.ceil(nf.h / L - 1e-6) * L, cover = Math.ceil(Math.max(Math.max(0, +nf.cover || 0), L * (1 + topL)) / L - 1e-6) * L; return depth + cover + 0.6; }
+// NFC auto-size: if the chip doesn't fit, try the widest spot, then make the part thicker / bigger (no stretching) until it fits with 2 mm of plastic all round
+async function fitPocket(base, nf, id) {
+  let pk = addPocket(base, nf);
+  if (!pk.err || !S.spec || S.spec.kind === "stl" || nf.pos === "manual") return { base, pk };
+  const box = boxOn(), from = box ? { x: S.box.x, y: S.box.y, z: S.box.z } : { ...S.dims }, info = { from: { ...S.dims }, moved: false, grew: false, thicker: false };
+  const use = nf.pos === "auto" ? nf : { ...nf, pos: "auto" }; // widest spot: the most room for the chip
+  if (use !== nf) { const t = addPocket(base, use); if (!t.err) { info.moved = true; info.to = { ...S.dims }; S.nfcAuto = info; return { base, pk: t }; } pk = t; }
+  // thickness first
+  const needZ = +(pocketNeedZ(nf) + Math.max(featHeight(), S.spec.lip && (+S.spec.lipW || 0) > 0 ? Math.max(0.2, +S.spec.lipH || 2) : 0) + 1e-6).toFixed(2);
+  if (pk.kind === "thin" || (box ? S.box.z : S.dims.z) < needZ) { const z = Math.ceil(Math.max(needZ, box ? S.box.z : S.dims.z) * 10 - 1e-6) / 10; if (z > (box ? S.box.z : S.dims.z) + 1e-6) { S.nfcZ = z; if (!box) S.dims.z = z; info.thicker = true; base = await genBase(); if (id !== genId) return { base, pk }; pk = addPocket(base, use); if (!pk.err) { info.moved = use !== nf; info.to = { ...S.dims }; S.nfcAuto = info; return { base, pk }; } } }
+  // then grow X/Y together (keeps the artwork's proportions)
+  let last = 1; const build = async g => { last = g; if (box) S.nfcGrow = g; else { S.dims.x = +(from.x * g).toFixed(3); S.dims.y = +(from.y * g).toFixed(3); } const b = await genBase(); return { b, p: addPocket(b, use), dims: { ...S.dims } }; };
+  let lo = 1, hi = 1, best = null;
+  for (let k = 0; k < 16 && !best; k++) { hi *= 1.15; const r = await build(hi); if (id !== genId) return { base, pk }; if (!r.p.err) best = { g: hi, ...r }; else lo = hi; }
+  if (!best) { if (box) S.nfcGrow = 1; else Object.assign(S.dims, from); return { base: await genBase(), pk: { err: `The ${nf.d} mm chip can't fit this shape even at ${n1(from.x * hi)} mm wide. Use a smaller chip or set the chip position by hand.` } }; }
+  for (let k = 0; k < 4; k++) { const mid = (lo + best.g) / 2, r = await build(mid); if (id !== genId) return { base, pk }; if (!r.p.err) best = { g: mid, ...r }; else lo = mid; }
+  const fin = last === best.g ? best : await build(best.g); // rebuild at the best size if the last try was a miss
+  Object.assign(S.dims, fin.dims); info.grew = true; info.moved = use !== nf; info.to = { ...S.dims }; S.nfcAuto = info;
+  return { base: fin.b, pk: fin.p };
+}
 function addPocket(base, nf) {
   const T = base.tris, r = nf.d / 2, L = +nf.layer || 0.2, bb = triBBox(T);
   // Bambu-safe lid: one bridge layer over the chip + 5 solid top layers (Bambu's standard top shell), so the top prints as one normal, smooth surface
-  const askCover = Math.max(0, +nf.cover || 0), minCover = L + 1.0, cover = +(Math.ceil(Math.max(askCover, minCover) / L - 1e-6) * L).toFixed(4), coverRaised = askCover < minCover - 1e-6;
-  const WALL = 2.0; // plastic around the pocket's side: room for Bambu's 2 wall loops on the outside AND around the pocket, so the chip outline can't ghost through the edge
+  const topL = clamp(Math.round(+nf.topL || 7), 1, 30), askCover = Math.max(0, +nf.cover || 0), minCover = L * (1 + topL), cover = +(Math.ceil(Math.max(askCover, minCover) / L - 1e-6) * L).toFixed(4), coverRaised = askCover < minCover - 1e-6;
+  const WALL = clamp(+nf.wall || 2, 0.8, 10); // plastic around the pocket's side: room for Bambu's 2 wall loops on the outside AND around the pocket, so the chip outline can't ghost through the edge
   const c0 = nf.pos === "manual" && isFinite(nf.x) && isFinite(nf.y) ? { x: bb[0] + nf.x, y: bb[1] + nf.y } : nf.pos === "auto" ? footprintCenter(T) : nf.pos === "shape" ? partMiddle(base, bb) : { x: (bb[0] + bb[3]) / 2, y: (bb[1] + bb[4]) / 2 };
   const cx = c0.x, cy = c0.y;
   const j = 1e-3 * Math.PI, hc = zHits(T, cx + j, cy + j * 1.3);
-  if (hc.length < 2 || hc.length % 2) return { err: "There's no solid material at the pocket's center. Move the pocket onto the part." };
+  if (hc.length < 2 || hc.length % 2) return { kind: "wide", err: "There's no solid material at the pocket's center. Move the pocket onto the part." };
   const zt = hc[hc.length - 1], zb = hc[hc.length - 2], depth = Math.ceil(nf.h / L - 1e-6) * L;
   let top = nf.zmode === "middle" ? Math.min(Math.floor((zt - cover) / L + 1e-6) * L, Math.round(((zb + zt) / 2 + depth / 2) / L) * L) : Math.floor((zt - cover) / L + 1e-6) * L; top = +top.toFixed(4); const bot = +(top - depth).toFixed(4);
   const need = depth + cover + 0.6;
-  if (bot < zb + 0.6 - 1e-6) return { err: `The part is ${(zt - zb).toFixed(1)} mm thick at the pocket. A ${depth.toFixed(2)} mm pocket with ${cover} mm on top needs at least ${need.toFixed(1)} mm (0.6 mm below). Make Z taller or the pocket thinner.` };
+  if (bot < zb + 0.6 - 1e-6) return { kind: "thin", need, have: zt - zb, err: `The part is ${(zt - zb).toFixed(1)} mm thick at the pocket. A ${depth.toFixed(2)} mm pocket with ${cover} mm on top needs at least ${need.toFixed(1)} mm (0.6 mm below). Make Z taller or the pocket thinner.` };
   // the pocket must sit inside solid material all round: check its rim (plus 0.8 mm wall) and its inside
   const pts = []; for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2 + 0.013; pts.push([r + WALL, a, bot, top]); pts.push([r * 0.95, a, bot - 0.4, top + 0.4]); pts.push([r * 0.5, a, bot - 0.4, top + 0.4]); }
-  for (const [rr, a, lo, hi] of pts) { const z = zHits(T, cx + rr * Math.cos(a) + j, cy + rr * Math.sin(a) + j * 1.3); let ok = false; for (let i = 0; i + 1 < z.length; i += 2) if (z[i] <= lo + 1e-6 && z[i + 1] >= hi - 1e-6) ok = true; if (!ok) return { err: `A ${nf.d} mm pocket doesn't fit inside the part here: ${rr > r ? `it needs ${WALL} mm of solid plastic around its side so it stays hidden and the keychain prints as one solid piece` : "it would break through the top or bottom"}. Make the pocket smaller, move it, or make the part bigger.` }; }
+  for (const [rr, a, lo, hi] of pts) { const z = zHits(T, cx + rr * Math.cos(a) + j, cy + rr * Math.sin(a) + j * 1.3); let ok = false; for (let i = 0; i + 1 < z.length; i += 2) if (z[i] <= lo + 1e-6 && z[i + 1] >= hi - 1e-6) ok = true; if (!ok) return { kind: "wide", err: `A ${nf.d} mm pocket doesn't fit inside the part here: ${rr > r ? `it needs ${n1(WALL)} mm of solid plastic around its side so it stays hidden and the keychain prints as one solid piece` : "it would break through the top or bottom"}. Make the pocket smaller, move it, or make the part bigger.` }; }
   // inward-facing cylinder (normals point into the cavity)
   const n = Math.max(48, Math.min(160, Math.round(nf.d * 3))), out = [], P = k => { const a = k / n * Math.PI * 2; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
   for (let k = 0; k < n; k++) {
@@ -1502,7 +1538,7 @@ function addPocket(base, nf) {
     out.push(ax, ay, bot, ax, ay, top, bx, by, bot, bx, by, bot, ax, ay, top, bx, by, top); // wall faces inward
   }
   const merged = new Float32Array(T.length + out.length); merged.set(T); merged.set(out, T.length); base.tris = merged; base.pocketTris = out.length;
-  return { cx, cy, relX: cx - bb[0], relY: cy - bb[1], r, top, bot, depth, cover: +(zt - top).toFixed(3), coverRaised, layer: L, pauseZ: +(top + L).toFixed(3), pauseLayer: Math.round((top + L) / L) };
+  return { cx, cy, relX: cx - bb[0], relY: cy - bb[1], r, top, bot, depth, cover: +(zt - top).toFixed(3), coverRaised, topL, wall: WALL, layer: L, pauseZ: +(top + L).toFixed(3), pauseLayer: Math.round((top + L) / L) };
 }
 // shapes without a flat bottom get a stem that goes into the stand's slot
 function standStem(sp) { if (!sp.stand || !sp.stand.on || (sp.kind === "shape" && (sp.shape === "rect" || sp.shape === "rounded"))) return null; return { up: 3, down: clamp(+sp.stand.slot || 9, 3, 30) }; }
@@ -1531,7 +1567,7 @@ async function genBase() {
   let src = null;
   if (sp.kind === "cutout") { src = cutSource(); if (!src) throw new UserError("Add an image or some lettering in Design so the outline has something to follow."); }
   if (boxOn() && sp.kind === "cutout") {
-    const B = S.box, sc = cutSpec(sp); d.z = B.z; const tb = Math.max(0.6, B.z - Math.max(fh, lipH));
+    const g = S.nfcGrow || 1, B = { x: +(S.box.x * g).toFixed(3), y: +(S.box.y * g).toFixed(3), z: Math.max(S.box.z, S.nfcZ || 0) }, sc = cutSpec(sp); d.z = B.z; const tb = Math.max(0.6, B.z - Math.max(fh, lipH));
     let dd = { x: B.x, y: B.y, z: B.z }, r = await buildBase(sc, dd, true, "x", src, tb); // fit inside X × Y (band included), no stretching
     if (dd.y > B.y + 0.02) { dd = { x: B.x, y: B.y, z: B.z }; r = await buildBase(sc, dd, true, "y", src, tb); }
     d.x = dd.x; d.y = dd.y; return r;
@@ -2403,12 +2439,12 @@ function parseChanges(raw) {
   else if (has(/\b(add|with|give it)\b[^.]*\b(lip|raised edge|rim)\b/) && gen) add("2 mm raised edge", () => { $("mLip").checked = true; specFromControls(); }, 2);
   const nfcD = t.match(/(\d+(?:\.\d+)?)\s*mm\s*(?:nfc|chip)/);
   if (has(/\b(remove|no|without)\b[^.]*\b(nfc|chip)\b/)) add("remove NFC pocket", () => { S.spec.nfc = { ...(S.spec.nfc || {}), on: false }; syncNfc(); }, 2);
-  else if (has(/\b(add|with|put|insert|hidden)\b[^.]*\b(nfc|chip)\b/) || nfcD) add(`hidden ${nfcD ? nfcD[1] : (S.spec && S.spec.nfc && S.spec.nfc.d) || 26} mm NFC pocket`, () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, dx: 0, dy: 0, pos: "center", zmode: "top", ...(S.spec.nfc || {}), on: true, ...(nfcD ? { d: +nfcD[1] } : {}) }; syncNfc(); }, 2);
-  if (has(/\b(move|put|place|center|centre)\b[^.]*\b(nfc|chip|pocket)\b[^.]*\b(middle|center|centre)\b|\b(nfc|chip|pocket)\b[^.]*\b(in|to) the (middle|center|centre)\b/) && !has(/middle of the (thickness|depth)/)) add("NFC chip in the center of the print", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "center" }; syncNfc(); }, 2);
-  if (has(/\b(nfc|chip|pocket)\b[^.]*\bmiddle of the (thickness|depth)\b/)) add("NFC chip in the middle of the thickness", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, zmode: "middle" }; syncNfc(); }, 2);
+  else if (has(/\b(add|with|put|insert|hidden)\b[^.]*\b(nfc|chip)\b/) || nfcD) add(`hidden ${nfcD ? nfcD[1] : (S.spec && S.spec.nfc && S.spec.nfc.d) || 26} mm NFC pocket`, () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.6, layer: 0.2, dx: 0, dy: 0, pos: "center", zmode: "top", ...(S.spec.nfc || {}), on: true, ...(nfcD ? { d: +nfcD[1] } : {}) }; syncNfc(); }, 2);
+  if (has(/\b(move|put|place|center|centre)\b[^.]*\b(nfc|chip|pocket)\b[^.]*\b(middle|center|centre)\b|\b(nfc|chip|pocket)\b[^.]*\b(in|to) the (middle|center|centre)\b/) && !has(/middle of the (thickness|depth)/)) add("NFC chip in the center of the print", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.6, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "center" }; syncNfc(); }, 2);
+  if (has(/\b(nfc|chip|pocket)\b[^.]*\bmiddle of the (thickness|depth)\b/)) add("NFC chip in the middle of the thickness", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.6, layer: 0.2, ...(S.spec.nfc || {}), on: true, zmode: "middle" }; syncNfc(); }, 2);
   const fromEdge = t.match(/\b(?:nfc|chip|pocket)\b[^.]*?(\d+(?:\.\d+)?)\s*mm\s+from\s+the\s+(bottom|top|left|right)/);
-  if (fromEdge) { const v = +fromEdge[1], e = fromEdge[2]; add(`NFC chip ${v} mm from the ${e}`, () => { const k = S.base && S.base.pocket, nf = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "manual" }; nf.x = nf.x != null && nf.pos === "manual" && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.x : k ? +k.relX.toFixed(2) : S.dims.x / 2; nf.y = nf.y != null && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.y : k ? +k.relY.toFixed(2) : S.dims.y / 2; if (e === "bottom") nf.y = v; if (e === "top") nf.y = S.dims.y - v; if (e === "left") nf.x = v; if (e === "right") nf.x = S.dims.x - v; S.spec.nfc = nf; syncNfc(); }, 2); }
-  if (has(/\b(nfc|chip|pocket)\b[^.]*\bwidest\b/)) add("NFC chip at the widest spot", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "auto" }; syncNfc(); }, 2);
+  if (fromEdge) { const v = +fromEdge[1], e = fromEdge[2]; add(`NFC chip ${v} mm from the ${e}`, () => { const k = S.base && S.base.pocket, nf = { d: 26, h: 1.2, cover: 1.6, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "manual" }; nf.x = nf.x != null && nf.pos === "manual" && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.x : k ? +k.relX.toFixed(2) : S.dims.x / 2; nf.y = nf.y != null && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.y : k ? +k.relY.toFixed(2) : S.dims.y / 2; if (e === "bottom") nf.y = v; if (e === "top") nf.y = S.dims.y - v; if (e === "left") nf.x = v; if (e === "right") nf.x = S.dims.x - v; S.spec.nfc = nf; syncNfc(); }, 2); }
+  if (has(/\b(nfc|chip|pocket)\b[^.]*\bwidest\b/)) add("NFC chip at the widest spot", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.6, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "auto" }; syncNfc(); }, 2);
   const lean = t.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree)/);
   if (has(/\b(remove|no|without)\b[^.]*\b(stand|base)\b/)) add("remove stand base", async () => { const old = { ...S.spec }; S.spec.stand = { ...(S.spec.stand || {}), on: false }; syncNfc(); if (old.kind === "shape") await keepBodySize(old, S.spec); }, 2);
   else if (has(/\b(stand|easel|holder|sign base|base that holds)\b/) && has(/\b(add|make|with|turn|into|give)\b/)) add(`stand base${lean ? ` leaning ${lean[1]}°` : ""}`, async () => { const old = { ...S.spec }; S.spec.stand = { on: true, angle: lean ? +lean[1] : 10, d: 40, h: 14, w: 0, slot: 9, clear: 0.35, ...(old.stand && old.stand.on ? old.stand : {}), ...(lean ? { angle: +lean[1] } : {}) }; syncNfc(); if (old.kind === "shape") await keepBodySize(old, S.spec); }, 2);
@@ -3387,9 +3423,10 @@ async function rebuild() {
   const id = ++genId; busy(true); const t0 = performance.now();
   try {
     await ensureFont($("ltFont").value);
-    const base = await genBase(); if (id !== genId) return;
+    S.nfcGrow = 1; S.nfcZ = 0; S.nfcAuto = null;
+    let base = await genBase(); if (id !== genId) return;
     const nf = S.spec.nfc; base.pocket = null; base.pocketErr = null;
-    if (nf && nf.on) { const pk = addPocket(base, nf); if (pk.err) base.pocketErr = pk.err; else base.pocket = pk; }
+    if (nf && nf.on) { const r = await fitPocket(base, nf, id); if (id !== genId) return; base = r.base; base.pocket = null; base.pocketErr = null; if (r.pk.err) base.pocketErr = r.pk.err; else base.pocket = r.pk; }
     const st = S.spec.stand; S.stand = null;
     if (st && st.on) { const plT = base.lip || base.kind === "stl" || !base.t ? S.dims.z : base.t; S.stand = buildStandBase(st, S.dims.x, plT); }
     S.base = base;
@@ -3432,6 +3469,41 @@ function writeDims() {
   $("dimUnitNote").textContent = S.units;
   document.querySelectorAll(".unit[id^=p]").forEach(el => el.dataset.unit = S.units);
 }
+// smooth UV top: Bambu Studio settings per printer + filament (starting points; ironing is filament-specific)
+const SMOOTH_FIL = {
+  pla:   { name: "PLA Basic", flow: 15, sp: 0.15, iv: 30, top: 80, tip: "" },
+  matte: { name: "PLA Matte", flow: 15, sp: 0.15, iv: 30, top: 80, tip: "Ironing gives matte PLA a slight sheen on top; that's normal and takes UV ink well." },
+  petg:  { name: "PETG", flow: 10, sp: 0.15, iv: 20, top: 60, tip: "PETG can drag blobs while ironing: if you see them, lower Ironing flow to 8% and keep the nozzle clean." },
+  abs:   { name: "ABS / ASA", flow: 10, sp: 0.15, iv: 30, top: 60, tip: "Keep the door and lid closed so the top doesn't warp or cool unevenly." },
+  silk:  { name: "PLA Silk", flow: 10, sp: 0.15, iv: 20, top: 60, tip: "Silk is glossy and shows every line; it's the hardest filament to get flat for UV. PLA Basic or Matte gives a better print surface." }
+};
+function smoothSettings() {
+  const f = SMOOTH_FIL[$("smFil").value] || SMOOTH_FIL.pla, pr = $("smPrinter").value, nf = (S.spec && S.spec.nfc) || {}, L = +nf.layer || +$("nfcLayer").value || 0.2, topL = clamp(Math.round(+nf.topL || +$("nfcTopL").value || 7), 1, 30);
+  return [
+    ["Before the first print", `Calibration tab: run Flow Dynamics and Flow Rate calibration for this ${f.name} spool. Even, correct flow is what makes the top flat.`],
+    ["Quality ▸ Layer height", `${L.toFixed(2)} mm${nf.on ? " (must match the NFC layer height in this app so the pause lands right)" : ""}`],
+    ["Quality ▸ Seam position", "Back"],
+    ["Quality ▸ Ironing type", "Topmost surface"],
+    ["Quality ▸ Ironing pattern", "Rectilinear"],
+    ["Quality ▸ Ironing flow", `${f.flow}%`],
+    ["Quality ▸ Ironing line spacing", `${f.sp.toFixed(2)} mm`],
+    ["Quality ▸ Ironing speed", `${f.iv} mm/s`],
+    ["Quality ▸ Ironing angle / inset", "Leave at the defaults"],
+    ["Strength ▸ Top shell layers", `${topL}${nf.on ? " (same as this app's top layers over the NFC chip)" : ""}`],
+    ["Strength ▸ Top shell thickness", `${(topL * L).toFixed(1)} mm or less, so the ${topL} layers decide`],
+    ["Strength ▸ Top surface pattern", "Monotonic"],
+    ["Strength ▸ Internal solid infill pattern", "Monotonic (stops the layer below showing through)"],
+    ["Strength ▸ Only one wall on top surfaces", "Off"],
+    ["Speed ▸ Top surface", `${f.top} mm/s`],
+    ...(pr === "h2d" ? [["H2D ▸ Filament / nozzle", "Print the whole part from one filament on one nozzle (left or right) and turn the Prime tower off, so the top is never interrupted by a nozzle swap."]]
+      : [["X1C ▸ Filament", "Print the part from one AMS slot so there are no filament changes on the top layers."]]),
+    ...(f.tip ? [[f.name, f.tip]] : [])
+  ];
+}
+function smoothUpdate() { const rows = smoothSettings(); $("smList").innerHTML = rows.map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join(""); }
+for (const id of ["smPrinter", "smFil"]) $(id).addEventListener("input", () => { try { localStorage.setItem("omni-smooth", JSON.stringify({ p: $("smPrinter").value, f: $("smFil").value })); } catch (e) {} smoothUpdate(); });
+try { const v = JSON.parse(localStorage.getItem("omni-smooth") || "null"); if (v) { if (v.p) $("smPrinter").value = v.p; if (v.f) $("smFil").value = v.f; } else if ($("printer").value === "h2d") $("smPrinter").value = "h2d"; } catch (e) {}
+$("smCopy").onclick = async () => { const t = `Bambu Studio · smooth UV top · ${$("smPrinter").selectedOptions[0].text} · ${$("smFil").selectedOptions[0].text}\n` + smoothSettings().map(([k, v]) => `${k}: ${v}`).join("\n"); try { await navigator.clipboard.writeText(t); $("smCopy").textContent = "Copied ✓"; } catch (e) { $("smCopy").textContent = "Couldn't copy"; } setTimeout(() => $("smCopy").textContent = "Copy settings", 1800); };
 function xboxUpdate() { // the exact image size to type into xTool: always the print surface, which is the part's own size for the top face
   const sf = S.surf, on = !!(S.base && sf); let up = "";
   if (on) { const n = sf.n || [0, 0, 1]; up = sf.isProj || n[2] > 0.99 ? (S.spec && S.spec.ring && S.spec.ring !== "none" ? "key ring at the top" : "back edge at the top") : sf.label.toLowerCase() + " facing up"; }
@@ -3440,7 +3512,7 @@ function xboxUpdate() { // the exact image size to type into xTool: always the p
 }
 document.querySelectorAll("[data-xcopy]").forEach(b => b.onclick = async () => { if (!S.surf) return; const t = `W ${S.surf.W.toFixed(2)} mm × H ${S.surf.H.toFixed(2)} mm`; try { await navigator.clipboard.writeText(t); b.textContent = "Copied ✓"; } catch (e) { b.textContent = t; } setTimeout(() => b.textContent = "Copy size", 1800); });
 function updateInfo() {
-  try { xboxUpdate(); } catch (e) { console.error(e); }
+  try { xboxUpdate(); smoothUpdate(); } catch (e) { console.error(e); }
   const sf = S.surf, wb = V.wb || (S.base ? worldBBox() : null);
   if (!S.base) { $("specs").innerHTML = ""; return; }
   const tri = allTris().length / 9;
@@ -3468,7 +3540,12 @@ function updateInfo() {
   else if (S.stand) { const b = S.stand; $("standInfo").className = "status ok"; $("standInfo").textContent = `Base ${n1(b.w)} × ${n1(b.d)} × ${n1(b.h)} mm. Slot ${b.slotW.toFixed(2)} mm wide (part ${(b.slotW - (+$("standClear").value || 0)).toFixed(2)} mm + clearance), ${n1(b.slotDepth)} mm deep, leaning back ${b.angle}°.`; }
   else $("standInfo").textContent = "";
   $("xStand").classList.toggle("hidden", !(S.stand && !S.stand.err));
-  if (S.base && S.base.pocket) { const k = S.base.pocket; if (document.activeElement !== $("nfcX")) $("nfcX").value = +k.relX.toFixed(2); if (document.activeElement !== $("nfcY")) $("nfcY").value = +k.relY.toFixed(2); $("nfcInfo").className = "status ok"; $("nfcInfo").textContent = `Chip center at X ${k.relX.toFixed(1)} mm, Y ${k.relY.toFixed(1)} mm from the bottom-left corner. Pocket ${(k.r * 2).toFixed(1)} mm round × ${k.depth.toFixed(2)} mm deep, from ${k.bot.toFixed(2)} to ${k.top.toFixed(2)} mm, with ${k.cover.toFixed(2)} mm of plastic on top${k.coverRaised ? ` (raised so Bambu prints a full, smooth top over the chip)` : ""} and at least 2 mm all round, so it's fully hidden. In Bambu Studio, add a pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer} at ${k.layer} mm layers), drop the chip in when it pauses, then resume. For a seamless one-piece look: slice at the same ${k.layer} mm layer height, set Seam position to Back, keep the door closed and resume within a minute or two so the part stays warm.`; }
+  if (S.base && S.base.pocket) { const k = S.base.pocket; if (document.activeElement !== $("nfcX")) $("nfcX").value = +k.relX.toFixed(2); if (document.activeElement !== $("nfcY")) $("nfcY").value = +k.relY.toFixed(2); $("nfcInfo").className = "status ok"; $("nfcInfo").textContent = `Chip center at X ${k.relX.toFixed(1)} mm, Y ${k.relY.toFixed(1)} mm from the bottom-left corner. Pocket ${(k.r * 2).toFixed(1)} mm round × ${k.depth.toFixed(2)} mm deep, from ${k.bot.toFixed(2)} to ${k.top.toFixed(2)} mm, with ${k.cover.toFixed(2)} mm of plastic on top${k.coverRaised ? ` (raised to 1 bridge layer + ${k.topL} top layers)` : ""} and at least ${n1(k.wall)} mm all round, so it's fully hidden. In Bambu Studio, add a pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer} at ${k.layer} mm layers), drop the chip in when it pauses, then resume. For a seamless one-piece look: slice at the same ${k.layer} mm layer height, set Seam position to Back, keep the door closed and resume within a minute or two so the part stays warm.`; }
+  if (S.base && S.base.pocket && S.nfcAuto) { const a = S.nfcAuto, bits = [];
+    if (a.grew) bits.push(`enlarged the part from ${n1(a.from.x)} × ${n1(a.from.y)} mm to ${n1(a.to.x)} × ${n1(a.to.y)} mm (same proportions)`);
+    if (a.thicker) bits.push(`made it ${n1(a.to.z)} mm thick`);
+    if (a.moved) bits.push("moved the chip to the widest spot");
+    $("nfcInfo").textContent = `Auto-sized so the ${n1(S.base.pocket.r * 2)} mm chip fits with ${n1(S.base.pocket.wall)} mm of plastic all round: ${bits.join(", ")}. ` + $("nfcInfo").textContent; }
   else if (S.base && S.base.pocketErr) { $("nfcInfo").className = "status err"; $("nfcInfo").textContent = S.base.pocketErr; }
   else $("nfcInfo").textContent = "";
   $("reliefRow").classList.toggle("hidden", $("fStyle").value !== "relief");
@@ -3513,7 +3590,7 @@ function specFromProduct(key, overrides) {
 }
 function syncNfc() {
   const sb = (S.spec && S.spec.stand) || {}; $("standOn").checked = !!sb.on; $("standAngle").value = sb.angle != null ? sb.angle : 10; $("standD").value = sb.d || 40; $("standH").value = sb.h || 14; $("standW").value = sb.w || 0; $("standSlot").value = sb.slot || 9; $("standClear").value = sb.clear != null ? sb.clear : 0.35;
-  const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 1.2;
+  const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 1.6; $("nfcTopL").value = nf.topL || 7; $("nfcWall").value = nf.wall || 2;
   $("nfcLayer").value = String(nf.layer || 0.2); if (nf.pos === "manual") { if (document.activeElement !== $("nfcX")) $("nfcX").value = nf.x != null ? nf.x : ""; if (document.activeElement !== $("nfcY")) $("nfcY").value = nf.y != null ? nf.y : ""; } $("nfcPos").value = nf.pos || "center"; $("nfcZ").value = nf.zmode || "top";
 }
 function syncModelControls() {
@@ -3537,6 +3614,7 @@ function pinUi() {
   const pn = $("pinNote"); pn.classList.toggle("hidden", !on || !S.spec || S.spec.kind === "stl");
   if (on && S.spec && S.spec.kind !== "stl") {
     const act = `${n1(S.dims.x)} × ${n1(S.dims.y)} mm`;
+    if (S.nfcAuto && (S.nfcAuto.grew || S.nfcAuto.thicker)) { pn.textContent = `Your kept size is ${txt}, but the NFC chip needs more room, so this part was enlarged to ${act} × ${n1(S.dims.z)} mm (same proportions). Use a smaller chip to stay within your kept size.`; return; }
     pn.textContent = S.spec.kind === "cutout" ? `The part keeps the artwork's shape and fits inside ${n1(b.x)} × ${n1(b.y)} mm without stretching: actual size ${act} × ${n1(b.z)} mm${bgRimOn() ? `, including a ${BG_RIM} mm band of your background color around the artwork` : ""}.`
       : `The part is ${n1(b.x)} × ${n1(b.y)} × ${n1(b.z)} mm.`;
   }
@@ -4272,19 +4350,19 @@ const TESTS = [
     return [ok, `${tMeshTxt(m)}; floor ${fl.W.toFixed(2)} mm wide at z ${fl.d.toFixed(2)}, lip top z ${lipTop.d.toFixed(2)}; volume ${m.v.volume.toFixed(0)} vs ${exp.toFixed(0)} mm³`];
   }],
   ["8c · coaster with hidden 26 mm NFC pocket", async () => {
-    const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 99.98, 99.99, 4), base = { tris: m.r.tris }, pk = addPocket(base, { on: true, d: 26, h: 1.2, cover: 1.2, layer: 0.2, dx: 0, dy: 0 });
+    const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 99.98, 99.99, 4), base = { tris: m.r.tris }, pk = addPocket(base, { on: true, d: 26, h: 1.2, cover: 1.6, layer: 0.2, dx: 0, dy: 0 });
     if (pk.err) return [false, pk.err];
     const v = validateMesh(base.tris), v0 = m.v, hole = v0.volume - v.volume, exp = Math.PI * 13 * 13 * 1.2, d = tDims(triBBox(base.tris));
-    const ok = v.ok && v.shells === 2 && v.cavities === 1 && v.inverted === 0 && near(hole, exp, exp * 0.01) && near(pk.top, 2.8, 1e-6) && near(pk.bot, 1.6, 1e-6) && near(pk.pauseZ, 3.0, 1e-6) && near(pk.cx, 49.99, 0.3) && near(pk.cy, 49.995, 0.3) && near(d[2], 6, 0.001);
+    const ok = v.ok && v.shells === 2 && v.cavities === 1 && v.inverted === 0 && near(hole, exp, exp * 0.01) && near(pk.top, 2.4, 1e-6) && near(pk.bot, 1.2, 1e-6) && near(pk.pauseZ, 2.6, 1e-6) && near(pk.cx, 49.99, 0.3) && near(pk.cy, 49.995, 0.3) && near(d[2], 6, 0.001);
     const rt = validateMesh(v.clean); // the exported mesh must keep the pocket hollow
     return [ok && rt.cavities === 1 && rt.inverted === 0, `${v.shells} shells, ${v.cavities} sealed pocket, pocket volume ${hole.toFixed(1)} vs ${exp.toFixed(1)} mm³, z ${pk.bot}-${pk.top} mm, centre ${pk.cx.toFixed(2)}, ${pk.cy.toFixed(2)}; pause at ${pk.pauseZ} mm (layer ${pk.pauseLayer})`];
   }],
-  ["8e · NFC pocket is Bambu-safe: thin lid raised, 2 mm side wall enforced", async () => {
-    const m = await tBuildShape({ shape: "oval" }, 50, 50, 4), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 0.8, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 47, h: 1.2, cover: 1.2, layer: 0.2 });
-    return [!pk.err && near(pk.cover, 1.2, 1e-6) && pk.coverRaised === true && near(pk.top, 2.8, 1e-6) && !!pk2.err && /2 mm/.test(pk2.err), `asked 0.8 mm lid → ${pk.cover} mm (raised ${pk.coverRaised}), pocket ${pk.bot}-${pk.top} mm · 47 mm pocket in 50 mm part: "${pk2.err}"`];
+  ["8e · NFC pocket is Bambu-safe: thin lid raised to bridge + 7 top layers, 2 mm side wall enforced", async () => {
+    const m = await tBuildShape({ shape: "oval" }, 50, 50, 4), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 0.8, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 47, h: 1.2, cover: 1.6, layer: 0.2 });
+    return [!pk.err && near(pk.cover, 1.6, 1e-6) && pk.coverRaised === true && near(pk.top, 2.4, 1e-6) && !!pk2.err && /2 mm/.test(pk2.err), `asked 0.8 mm lid → ${pk.cover} mm (raised ${pk.coverRaised}), pocket ${pk.bot}-${pk.top} mm · 47 mm pocket in 50 mm part: "${pk2.err}"`];
   }],
   ["8d · NFC pocket refuses a part that is too thin", async () => {
-    const m = await tBuildShape({ shape: "oval" }, 50, 50, 2), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 1.2, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 60, h: 0.4, cover: 0.6, layer: 0.2 });
+    const m = await tBuildShape({ shape: "oval" }, 50, 50, 2), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 1.6, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 60, h: 0.4, cover: 0.6, layer: 0.2 });
     return [!!pk.err && !!pk2.err, `2 mm part: "${pk.err}" · too wide: "${pk2.err}"`];
   }],
   ["Shape · rectangle, heart and concave C outline", async () => {
@@ -4752,10 +4830,10 @@ for (const id of ["standOn", "standAngle", "standD", "standH", "standW", "standS
   if (old.kind === "shape" && (!!standStem(old) !== !!standStem(S.spec) || (standStem(old) && standStem(old).down !== standStem(S.spec).down))) { try { await keepBodySize(old, S.spec); } catch (e) { console.error(e); } }
   updateInfo(); scheduleGeo();
 });
-for (const id of ["nfcOn", "nfcD", "nfcH", "nfcCover", "nfcLayer", "nfcX", "nfcY", "nfcPos", "nfcZ"]) $(id).addEventListener("input", () => {
+for (const id of ["nfcOn", "nfcD", "nfcH", "nfcCover", "nfcTopL", "nfcWall", "nfcLayer", "nfcX", "nfcY", "nfcPos", "nfcZ"]) $(id).addEventListener("input", () => {
   if (!S.spec) return;
   const prev = S.spec.nfc || {}, typedXY = id === "nfcX" || id === "nfcY", cur = S.base && S.base.pocket;
-  S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 1.2, 0.4, 5), layer: +$("nfcLayer").value || 0.2, pos: typedXY ? "manual" : $("nfcPos").value, zmode: $("nfcZ").value,
+  S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 1.6, 0.4, 5), topL: clamp(Math.round(+$("nfcTopL").value || 7), 1, 30), wall: clamp(+$("nfcWall").value || 2, 0.8, 10), layer: +$("nfcLayer").value || 0.2, pos: typedXY ? "manual" : $("nfcPos").value, zmode: $("nfcZ").value,
     x: typedXY || $("nfcPos").value === "manual" ? (+$("nfcX").value || 0) : prev.x, y: typedXY || $("nfcPos").value === "manual" ? (+$("nfcY").value || 0) : prev.y };
   if (id === "nfcPos" && $("nfcPos").value === "manual" && cur && !isFinite(prev.x)) { S.spec.nfc.x = +cur.relX.toFixed(2); S.spec.nfc.y = +cur.relY.toFixed(2); }
   if (typedXY) $("nfcPos").value = "manual";
@@ -4798,7 +4876,7 @@ function planFromDescription(P) {
   else if (x == null) x = y / ratio; else if (y == null) y = x * ratio;
   const z = P.z || { stand: 4, keychain: 4, coaster: 6, plate: 4, hanging: 4, bagtag: 3.5, ornament: 3, magnet: 3, nameplate: 4 }[P.product];
   const spec = { kind: "shape", shape, radius: shape === "rect" ? 0 : 6, margin: 2, fillHoles: true, ring: P.ring ? "top" : "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!P.lip, lipH: 2, lipW: 3, product: P.product === "coaster" ? "coaster" : "custom" };
-  if (P.nfc) spec.nfc = { on: true, d: P.nfcD || 26, h: 1.2, cover: 1.2, layer: 0.2, dx: 0, dy: 0, pos: P.nfcWide ? "auto" : "center", zmode: P.nfcMid ? "middle" : "top" };
+  if (P.nfc) spec.nfc = { on: true, d: P.nfcD || 26, h: 1.2, cover: 1.6, layer: 0.2, dx: 0, dy: 0, pos: P.nfcWide ? "auto" : "center", zmode: P.nfcMid ? "middle" : "top" };
   if (P.product === "stand") spec.stand = { on: true, angle: P.angle != null ? P.angle : 10, d: 40, h: 14, w: 0, slot: 9, clear: 0.35 };
   return { spec, dims: { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) }, lock: shape === "oval" || shape === "heart" || shape === "hexagon" };
 }
