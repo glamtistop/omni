@@ -750,8 +750,18 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <h3>Smooth top for UV · Bambu Studio settings</h3>
         <div class="row">
           <label class="f" for="smPrinter">Printer<select id="smPrinter"><option value="x1">X1C</option><option value="h2d">H2D</option></select></label>
-          <label class="f" for="smFil">Filament<select id="smFil"><option value="pla">PLA Basic</option><option value="matte">PLA Matte</option><option value="petg">PETG (HF / Basic)</option><option value="abs">ABS / ASA</option><option value="silk">PLA Silk</option></select></label>
+          <label class="f" for="smFil">Filament<select id="smFil"><optgroup label="My filaments"><option value="esun">eSUN PLA+</option><option value="elegoo">ELEGOO PLA+</option><option value="sunlu">SUNLU PLA+</option><option value="rpetg">ELEGOO Rapid PETG</option></optgroup><optgroup label="Other"><option value="matte">PLA Matte</option><option value="abs">ABS / ASA</option><option value="silk">PLA Silk</option></optgroup></select></label>
         </div>
+        <div class="row">
+          <label class="f" for="smCalSel">My saved calibration<select id="smCalSel"></select></label>
+          <label class="f" for="smCalName">Name (color / spool)<input type="text" id="smCalName" maxlength="40" placeholder="e.g. White spool"></label>
+        </div>
+        <div class="row">
+          <label class="f" for="smK">Flow Dynamics (K)<input type="number" id="smK" min="0" max="1" step="0.001" placeholder="not set" inputmode="decimal"></label>
+          <label class="f" for="smFR">Flow ratio<input type="number" id="smFR" min="0.5" max="1.5" step="0.001" placeholder="not set" inputmode="decimal"></label>
+        </div>
+        <div class="btns"><button class="btn small primary" id="smCalSave">Save</button><button class="btn small" id="smCalNew">+ New</button><button class="btn small" id="smCalDel">Delete</button></div>
+        <p class="note" id="smCalNote"></p>
         <ol class="smlist" id="smList"></ol>
         <div class="btns"><button class="btn small" id="smCopy">Copy settings</button></div>
         <p class="note">Set these in Bambu Studio's <b>Process</b> panel (turn on <b>Advanced</b>; you can also right-click the part ▸ add settings so they apply to this part only). Ironing numbers are proven starting points: if the top looks rough or pillowy, print a MakerWorld "ironing calibration" test once with your filament and use the best square.</p>
@@ -3470,17 +3480,34 @@ function writeDims() {
   document.querySelectorAll(".unit[id^=p]").forEach(el => el.dataset.unit = S.units);
 }
 // smooth UV top: Bambu Studio settings per printer + filament (starting points; ironing is filament-specific)
-const SMOOTH_FIL = {
-  pla:   { name: "PLA Basic", flow: 15, sp: 0.15, iv: 30, top: 80, tip: "" },
-  matte: { name: "PLA Matte", flow: 15, sp: 0.15, iv: 30, top: 80, tip: "Ironing gives matte PLA a slight sheen on top; that's normal and takes UV ink well." },
-  petg:  { name: "PETG", flow: 10, sp: 0.15, iv: 20, top: 60, tip: "PETG can drag blobs while ironing: if you see them, lower Ironing flow to 8% and keep the nozzle clean." },
-  abs:   { name: "ABS / ASA", flow: 10, sp: 0.15, iv: 30, top: 60, tip: "Keep the door and lid closed so the top doesn't warp or cool unevenly." },
-  silk:  { name: "PLA Silk", flow: 10, sp: 0.15, iv: 20, top: 60, tip: "Silk is glossy and shows every line; it's the hardest filament to get flat for UV. PLA Basic or Matte gives a better print surface." }
+const SMOOTH_FIL = { // temps: middle of each maker's published range, nudged for Bambu speeds; ironing: proven starting points
+  esun:   { name: "eSUN PLA+", fr: 0.98, k: 0.02, prof: "Generic PLA", noz: 215, noz1: 220, bed: 55, flow: 15, sp: 0.15, iv: 30, top: 80, tip: "eSUN rates PLA+ at 205 ± 15 °C. If the top looks dull or lines show, try 220 °C; if it strings, 210 °C." },
+  elegoo: { name: "ELEGOO PLA+", fr: 0.98, k: 0.02, prof: "Generic PLA", noz: 215, noz1: 220, bed: 55, flow: 15, sp: 0.15, iv: 30, top: 80, tip: "ELEGOO rates PLA+ at 200–230 °C. Stay at 215–220 °C for a smooth top." },
+  sunlu:  { name: "SUNLU PLA+", fr: 0.98, k: 0.02, prof: "Generic PLA", noz: 220, noz1: 225, bed: 55, flow: 15, sp: 0.15, iv: 30, top: 80, tip: "SUNLU lists 205–215 °C for slow printing and 215–245 °C for fast printing; 220 °C suits Bambu speeds. If you switch from another PLA, wipe the plate with dish soap and water first." },
+  rpetg:  { name: "ELEGOO Rapid PETG", fr: 0.95, k: 0.03, prof: "Generic PETG", noz: 245, noz1: 250, bed: 70, flow: 10, sp: 0.15, iv: 20, top: 60, vol: 18, tip: "Print on the Textured PEI plate (PETG can stick too hard to smooth PEI without glue stick). Dry the spool if it strings. If ironing drags blobs, lower Ironing flow to 8% and keep the nozzle clean." },
+  matte:  { name: "PLA Matte", fr: 0.98, k: 0.02, prof: "Generic PLA", noz: 215, noz1: 220, bed: 55, flow: 15, sp: 0.15, iv: 30, top: 80, tip: "Ironing gives matte PLA a slight sheen on top; that's normal and takes UV ink well." },
+  abs:    { name: "ABS / ASA", fr: 0.95, k: 0.03, prof: "Generic ABS / Generic ASA", noz: 260, noz1: 260, bed: 90, flow: 10, sp: 0.15, iv: 30, top: 60, tip: "Keep the door and lid closed so the top doesn't warp or cool unevenly." },
+  silk:   { name: "PLA Silk", fr: 0.98, k: 0.02, prof: "Generic PLA Silk", noz: 220, noz1: 225, bed: 55, flow: 10, sp: 0.15, iv: 20, top: 60, tip: "Silk is glossy and shows every line; it's the hardest filament to get flat for UV. Your PLA+ gives a better print surface." }
 };
+function smCalKey() { return $("smPrinter").value + "|" + $("smFil").value; }
+function smCalAll() { // { "printer|filament": { active: id, list: [{ id, name, k, fr }] } }, saved on this device
+  let all; try { all = JSON.parse(localStorage.getItem("omni-fil-cal2") || "null"); } catch (e) {}
+  if (!all) { all = {}; try { const old = JSON.parse(localStorage.getItem("omni-fil-cal") || "{}") || {}; for (const [key, v] of Object.entries(old)) { const id = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); all[key] = { active: id, list: [{ id, name: "My spool", k: v.k, fr: v.fr }] }; } } catch (e) {} }
+  return all;
+}
+function smCalStore(all) { try { localStorage.setItem("omni-fil-cal2", JSON.stringify(all)); } catch (e) {} }
+function smCalActive() { const e = smCalAll()[smCalKey()]; return (e && e.list.find(x => x.id === e.active)) || {}; }
 function smoothSettings() {
-  const f = SMOOTH_FIL[$("smFil").value] || SMOOTH_FIL.pla, pr = $("smPrinter").value, nf = (S.spec && S.spec.nfc) || {}, L = +nf.layer || +$("nfcLayer").value || 0.2, topL = clamp(Math.round(+nf.topL || +$("nfcTopL").value || 7), 1, 30);
+  const c = smCalActive();
+  const f = SMOOTH_FIL[$("smFil").value] || SMOOTH_FIL.esun, pr = $("smPrinter").value, nf = (S.spec && S.spec.nfc) || {}, L = +nf.layer || +$("nfcLayer").value || 0.2, topL = clamp(Math.round(+nf.topL || +$("nfcTopL").value || 7), 1, 30);
   return [
-    ["Before the first print", `Calibration tab: run Flow Dynamics and Flow Rate calibration for this ${f.name} spool. Even, correct flow is what makes the top flat.`],
+    ["Filament ▸ Profile", `Start from "${f.prof}", then save it as "${f.name}" so you only set this once`],
+    ["Filament ▸ Nozzle temperature", `Initial layer ${f.noz1} °C · Other layers ${f.noz} °C`],
+    ["Filament ▸ Bed temperature (Textured PEI)", `${f.bed} °C`],
+    ...(f.vol ? [["Filament ▸ Max volumetric speed", `${f.vol} mm³/s`]] : []),
+    ["Flow ratio (Filament ▸ Flow ratio)", c.fr ? `${c.fr} (your saved value: ${c.name})` : `Start at ${f.fr}, then run Calibration ▸ Flow Rate and save the result in the filament profile`],
+    ["Flow Dynamics / Factor K (Calibration ▸ Flow Dynamics ▸ Manage Result)", c.k ? `${c.k} (your saved value: ${c.name}) for this printer and nozzle` : `Start at ${f.k}, then run Calibration ▸ Flow Dynamics; Bambu saves K per printer and nozzle, not in the filament profile`],
+    ["Calibration order", `Flow Rate first, then Flow Dynamics, with a fresh, dry spool. Redo both when you open a new color or batch. Save your results above; use + New for each color or spool you calibrate.${pr === "h2d" ? " On the H2D, calibrate each nozzle you print with: left and right keep separate K values." : ""}`],
     ["Quality ▸ Layer height", `${L.toFixed(2)} mm${nf.on ? " (must match the NFC layer height in this app so the pause lands right)" : ""}`],
     ["Quality ▸ Seam position", "Back"],
     ["Quality ▸ Ironing type", "Topmost surface"],
@@ -3500,9 +3527,32 @@ function smoothSettings() {
     ...(f.tip ? [[f.name, f.tip]] : [])
   ];
 }
-function smoothUpdate() { const rows = smoothSettings(); $("smList").innerHTML = rows.map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join(""); }
+let smNewMode = false, smLastKey = "";
+function smCalSync() {
+  if (smCalKey() !== smLastKey) { smNewMode = false; smLastKey = smCalKey(); }
+  const e = smCalAll()[smCalKey()] || { list: [] }, f = SMOOTH_FIL[$("smFil").value] || SMOOTH_FIL.esun, cur = smNewMode ? null : e.list.find(x => x.id === e.active);
+  $("smCalSel").innerHTML = (smNewMode || !e.list.length ? `<option value="">${smNewMode ? "New calibration…" : "None saved yet"}</option>` : "") + e.list.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+  $("smCalSel").value = cur ? cur.id : "";
+  const act = document.activeElement; if (![ $("smK"), $("smFR"), $("smCalName") ].includes(act)) { $("smK").value = cur && cur.k || ""; $("smFR").value = cur && cur.fr || ""; $("smCalName").value = cur ? cur.name : ""; }
+  $("smK").placeholder = `start ${f.k}`; $("smFR").placeholder = `start ${f.fr}`; $("smCalDel").disabled = !cur;
+  $("smCalNote").textContent = `${f.name} on the ${$("smPrinter").selectedOptions[0].text}: ${e.list.length} saved on this device.${smNewMode ? " Enter the new values and press Save." : ""}`;
+}
+$("smCalSel").addEventListener("input", () => { const all = smCalAll(), e = all[smCalKey()]; smNewMode = false; if (e && $("smCalSel").value) { e.active = $("smCalSel").value; smCalStore(all); } $("smK").blur(); smoothUpdate(); });
+$("smCalNew").onclick = () => { smNewMode = true; $("smK").value = ""; $("smFR").value = ""; $("smCalName").value = ""; smoothUpdate(); $("smCalName").focus(); };
+$("smCalSave").onclick = () => {
+  const k = +$("smK").value, fr = +$("smFR").value, v = {}; if (k > 0 && k < 1) v.k = +k.toFixed(4); if (fr >= 0.5 && fr <= 1.5) v.fr = +fr.toFixed(4);
+  if (!v.k && !v.fr) { $("smCalNote").textContent = "Enter a Flow Dynamics (K) value (e.g. 0.025) or a Flow ratio (e.g. 0.97) first."; return; }
+  const all = smCalAll(), key = smCalKey(), e = all[key] || (all[key] = { active: null, list: [] }), name = $("smCalName").value.trim();
+  let cur = smNewMode ? null : e.list.find(x => x.id === e.active);
+  if (!cur) { cur = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: name || `Spool ${e.list.length + 1}` }; e.list.push(cur); }
+  else if (name) cur.name = name;
+  cur.k = v.k; cur.fr = v.fr; e.active = cur.id; smNewMode = false; smCalStore(all); document.activeElement && document.activeElement.blur(); smoothUpdate();
+  $("smCalNote").textContent = `Saved "${cur.name}". Press + New to add another color or spool.`;
+};
+$("smCalDel").onclick = () => { const all = smCalAll(), e = all[smCalKey()]; if (!e) return; const cur = e.list.find(x => x.id === e.active); if (!cur || !confirm(`Delete "${cur.name}"?`)) return; e.list = e.list.filter(x => x !== cur); e.active = e.list.length ? e.list[e.list.length - 1].id : null; if (!e.list.length) delete all[smCalKey()]; smCalStore(all); smoothUpdate(); };
+function smoothUpdate() { smCalSync(); const rows = smoothSettings(); $("smList").innerHTML = rows.map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join(""); }
 for (const id of ["smPrinter", "smFil"]) $(id).addEventListener("input", () => { try { localStorage.setItem("omni-smooth", JSON.stringify({ p: $("smPrinter").value, f: $("smFil").value })); } catch (e) {} smoothUpdate(); });
-try { const v = JSON.parse(localStorage.getItem("omni-smooth") || "null"); if (v) { if (v.p) $("smPrinter").value = v.p; if (v.f) $("smFil").value = v.f; } else if ($("printer").value === "h2d") $("smPrinter").value = "h2d"; } catch (e) {}
+try { const v = JSON.parse(localStorage.getItem("omni-smooth") || "null"); if (v) { if (v.p) $("smPrinter").value = v.p; if (v.f && SMOOTH_FIL[v.f]) $("smFil").value = v.f; } else if ($("printer").value === "h2d") $("smPrinter").value = "h2d"; } catch (e) {}
 $("smCopy").onclick = async () => { const t = `Bambu Studio · smooth UV top · ${$("smPrinter").selectedOptions[0].text} · ${$("smFil").selectedOptions[0].text}\n` + smoothSettings().map(([k, v]) => `${k}: ${v}`).join("\n"); try { await navigator.clipboard.writeText(t); $("smCopy").textContent = "Copied ✓"; } catch (e) { $("smCopy").textContent = "Couldn't copy"; } setTimeout(() => $("smCopy").textContent = "Copy settings", 1800); };
 function xboxUpdate() { // the exact image size to type into xTool: always the print surface, which is the part's own size for the top face
   const sf = S.surf, on = !!(S.base && sf); let up = "";
