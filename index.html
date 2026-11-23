@@ -580,7 +580,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <div class="row">
             <label class="f" for="nfcD">Pocket diameter<span class="unit" data-unit="mm"><input type="number" id="nfcD" min="5" max="120" step="0.5" value="26"></span></label>
             <label class="f" for="nfcH">Pocket depth<span class="unit" data-unit="mm"><input type="number" id="nfcH" min="0.2" max="10" step="0.1" value="1.2"></span></label>
-            <label class="f" for="nfcCover">Plastic above chip<span class="unit" data-unit="mm"><input type="number" id="nfcCover" min="0.4" max="5" step="0.1" value="0.8"></span></label>
+            <label class="f" for="nfcCover">Plastic above chip<span class="unit" data-unit="mm"><input type="number" id="nfcCover" min="0.4" max="5" step="0.1" value="1.2"></span></label>
           </div>
           <div class="row">
             <label class="f" for="nfcLayer">Bambu layer height<select id="nfcLayer"><option value="0.08">0.08 mm</option><option value="0.12">0.12 mm</option><option value="0.16">0.16 mm</option><option value="0.2" selected>0.20 mm</option><option value="0.24">0.24 mm</option><option value="0.28">0.28 mm</option></select></label>
@@ -593,7 +593,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           </div>
           <div class="btns"><button class="btn small" id="nfcTap" aria-pressed="false">Tap the model to place the chip</button></div>
           <p class="status" id="nfcInfo"></p>
-          <p class="note">The pocket is sealed inside the part, in the middle of the part unless you pick another spot. It's lined up with your layer height so the pause lands exactly on top of it. Shown as a dashed outline in the 3D view.</p>
+          <p class="note">The pocket is sealed inside the part, in the middle of the part unless you pick another spot. It's lined up with your layer height so the pause lands exactly on top of it, and always gets enough plastic above (one bridge layer + 5 top layers) and around it (2 mm) for Bambu to print it as one solid, seamless piece. Shown as a dashed outline in the 3D view.</p>
         </div>
       </section>
 
@@ -803,6 +803,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <label class="f" for="bClear">Jig pocket clearance<span class="unit" data-unit="mm"><input type="number" id="bClear" min="0.1" max="1.5" step="0.05" value="0.3"></span></label>
           <label class="f" for="bDepth">Pocket depth<span class="unit" data-unit="mm"><input type="number" id="bDepth" min="0" max="10" step="0.2" value="" placeholder="auto"></span></label>
           <label class="f" for="bJigW">Jig max width<span class="unit" data-unit="mm"><input type="number" id="bJigW" min="0" max="400" step="1" value="" placeholder="auto"></span></label>
+          <label class="f" for="bPockets">Pockets per jig<input type="number" id="bPockets" min="0" max="500" step="1" value="" placeholder="auto" inputmode="numeric" title="Leave on auto to match your quantity (up to what fits the bed)"></label>
         </div>
         <p class="status" id="bSummary"></p>
         <canvas id="bPreview" class="hidden" aria-label="Jig and sheet layout preview"></canvas>
@@ -1468,18 +1469,21 @@ function partMiddle(base, bb) {
   return { x: (bb[0] + bb[3]) / 2, y: (bb[1] + bb[4]) / 2 };
 }
 function addPocket(base, nf) {
-  const T = base.tris, r = nf.d / 2, L = +nf.layer || 0.2, cover = Math.max(0, +nf.cover || 0), bb = triBBox(T);
+  const T = base.tris, r = nf.d / 2, L = +nf.layer || 0.2, bb = triBBox(T);
+  // Bambu-safe lid: one bridge layer over the chip + 5 solid top layers (Bambu's standard top shell), so the top prints as one normal, smooth surface
+  const askCover = Math.max(0, +nf.cover || 0), minCover = L + 1.0, cover = +(Math.ceil(Math.max(askCover, minCover) / L - 1e-6) * L).toFixed(4), coverRaised = askCover < minCover - 1e-6;
+  const WALL = 2.0; // plastic around the pocket's side: room for Bambu's 2 wall loops on the outside AND around the pocket, so the chip outline can't ghost through the edge
   const c0 = nf.pos === "manual" && isFinite(nf.x) && isFinite(nf.y) ? { x: bb[0] + nf.x, y: bb[1] + nf.y } : nf.pos === "auto" ? footprintCenter(T) : nf.pos === "shape" ? partMiddle(base, bb) : { x: (bb[0] + bb[3]) / 2, y: (bb[1] + bb[4]) / 2 };
   const cx = c0.x, cy = c0.y;
   const j = 1e-3 * Math.PI, hc = zHits(T, cx + j, cy + j * 1.3);
   if (hc.length < 2 || hc.length % 2) return { err: "There's no solid material at the pocket's center. Move the pocket onto the part." };
   const zt = hc[hc.length - 1], zb = hc[hc.length - 2], depth = Math.ceil(nf.h / L - 1e-6) * L;
-  const top = nf.zmode === "middle" ? Math.min(Math.floor((zt - cover) / L + 1e-6) * L, Math.round(((zb + zt) / 2 + depth / 2) / L) * L) : Math.floor((zt - cover) / L + 1e-6) * L, bot = +(top - depth).toFixed(4);
+  let top = nf.zmode === "middle" ? Math.min(Math.floor((zt - cover) / L + 1e-6) * L, Math.round(((zb + zt) / 2 + depth / 2) / L) * L) : Math.floor((zt - cover) / L + 1e-6) * L; top = +top.toFixed(4); const bot = +(top - depth).toFixed(4);
   const need = depth + cover + 0.6;
   if (bot < zb + 0.6 - 1e-6) return { err: `The part is ${(zt - zb).toFixed(1)} mm thick at the pocket. A ${depth.toFixed(2)} mm pocket with ${cover} mm on top needs at least ${need.toFixed(1)} mm (0.6 mm below). Make Z taller or the pocket thinner.` };
   // the pocket must sit inside solid material all round: check its rim (plus 0.8 mm wall) and its inside
-  const pts = []; for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2 + 0.013; pts.push([r + 0.8, a, bot, top]); pts.push([r * 0.95, a, bot - 0.4, top + 0.4]); pts.push([r * 0.5, a, bot - 0.4, top + 0.4]); }
-  for (const [rr, a, lo, hi] of pts) { const z = zHits(T, cx + rr * Math.cos(a) + j, cy + rr * Math.sin(a) + j * 1.3); let ok = false; for (let i = 0; i + 1 < z.length; i += 2) if (z[i] <= lo + 1e-6 && z[i + 1] >= hi - 1e-6) ok = true; if (!ok) return { err: `A ${nf.d} mm pocket doesn't fit inside the part here: it would break through ${rr > r ? "the side" : "the top or bottom"}. Make the pocket smaller, move it, or make the part bigger.` }; }
+  const pts = []; for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2 + 0.013; pts.push([r + WALL, a, bot, top]); pts.push([r * 0.95, a, bot - 0.4, top + 0.4]); pts.push([r * 0.5, a, bot - 0.4, top + 0.4]); }
+  for (const [rr, a, lo, hi] of pts) { const z = zHits(T, cx + rr * Math.cos(a) + j, cy + rr * Math.sin(a) + j * 1.3); let ok = false; for (let i = 0; i + 1 < z.length; i += 2) if (z[i] <= lo + 1e-6 && z[i + 1] >= hi - 1e-6) ok = true; if (!ok) return { err: `A ${nf.d} mm pocket doesn't fit inside the part here: ${rr > r ? `it needs ${WALL} mm of solid plastic around its side so it stays hidden and the keychain prints as one solid piece` : "it would break through the top or bottom"}. Make the pocket smaller, move it, or make the part bigger.` }; }
   // inward-facing cylinder (normals point into the cavity)
   const n = Math.max(48, Math.min(160, Math.round(nf.d * 3))), out = [], P = k => { const a = k / n * Math.PI * 2; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
   for (let k = 0; k < n; k++) {
@@ -1489,7 +1493,7 @@ function addPocket(base, nf) {
     out.push(ax, ay, bot, ax, ay, top, bx, by, bot, bx, by, bot, ax, ay, top, bx, by, top); // wall faces inward
   }
   const merged = new Float32Array(T.length + out.length); merged.set(T); merged.set(out, T.length); base.tris = merged; base.pocketTris = out.length;
-  return { cx, cy, relX: cx - bb[0], relY: cy - bb[1], r, top, bot, depth, cover: +(zt - top).toFixed(3), layer: L, pauseZ: +(top + L).toFixed(3), pauseLayer: Math.round((top + L) / L) };
+  return { cx, cy, relX: cx - bb[0], relY: cy - bb[1], r, top, bot, depth, cover: +(zt - top).toFixed(3), coverRaised, layer: L, pauseZ: +(top + L).toFixed(3), pauseLayer: Math.round((top + L) / L) };
 }
 // shapes without a flat bottom get a stem that goes into the stand's slot
 function standStem(sp) { if (!sp.stand || !sp.stand.on || (sp.kind === "shape" && (sp.shape === "rect" || sp.shape === "rounded"))) return null; return { up: 3, down: clamp(+sp.stand.slot || 9, 3, 30) }; }
@@ -2186,13 +2190,17 @@ function batchPlan() {
   const clear = clamp(+$("bClear").value || 0.3, 0.1, 1.5), gap = clamp(+$("bGap").value || 4, 2, 30), edge = 10;
   const bed = OMNI_BED[$("bBed").value] || OMNI_BED.std, P = PRINTERS[$("printer").value];
   let maxW = Math.min(bed[0], P[0]) - 4, maxH = Math.min(bed[1], P[1]) - 4; if (+$("bJigW").value > 0) maxW = Math.min(maxW, +$("bJigW").value);
-  const fw = bw + 2 * clear, fh = bh + 2 * clear, cols = Math.floor((maxW - 2 * edge + gap) / (fw + gap)), rowsMax = Math.floor((maxH - 2 * edge + gap) / (fh + gap));
+  const fw = bw + 2 * clear, fh = bh + 2 * clear; let cols = Math.floor((maxW - 2 * edge + gap) / (fw + gap)); const rowsMax = Math.floor((maxH - 2 * edge + gap) / (fh + gap));
   const pm = 5, pg = 5, pc = Math.floor((P[0] - 2 * pm + pg) / (bw + pg)), prr = Math.floor((P[1] - 2 * pm + pg) / (bh + pg)), perPlate = Math.max(0, pc * prr);
   const plan = { sf, T, b, bw, bh, bz, orient, names, qty, clear, gap, edge, bed, P, pm, pg, pc, prr, perPlate, plates: perPlate ? Math.ceil(qty / perPlate) : 0 };
   if (!perPlate) plan.err = `One part (${n1(bw)} × ${n1(bh)} mm) doesn't fit the ${P[3]} plate.`;
   if (!orient) { plan.jigErr = `Jigs hold parts printed on their top or bottom face. The ${sf.label.toLowerCase()} is selected, so use single print images for this part.`; return plan; }
   if (cols < 1 || rowsMax < 1) { plan.jigErr = `The part (${n1(fw)} × ${n1(fh)} mm with clearance) is too big for a jig on the ${bed === OMNI_BED.std ? "standard" : "large"} Omni bed. Try the large bed.`; return plan; }
-  const rows = Math.min(rowsMax, Math.ceil(qty / cols)), cells = cols * rows, jigW = 2 * edge + cols * fw + (cols - 1) * gap, jigH = 2 * edge + rows * fh + (rows - 1) * gap;
+  const maxCells = cols * rowsMax, askP = Math.round(+$("bPockets").value || 0);
+  const cells = askP > 0 ? Math.min(askP, maxCells) : Math.min(qty, maxCells); // auto = one pocket per item, up to what fits
+  const rows = Math.ceil(cells / cols); cols = Math.ceil(cells / rows); // smallest, most even grid for that many pockets
+  if (askP > maxCells) plan.jigNote = `Only ${maxCells} pockets fit on this bed, so the jig has ${maxCells}.`;
+  const jigW = 2 * edge + cols * fw + (cols - 1) * gap, jigH = 2 * edge + rows * fh + (rows - 1) * gap;
   const pd = +$("bDepth").value > 0 ? clamp(+$("bDepth").value, 0.4, Math.max(0.4, bz)) : clamp(bz * 0.5, 1, 3);
   Object.assign(plan, { cols, rows, cells, jigW, jigH, fw, fh, pd, jigT: +(pd + 1.6).toFixed(2), sheets: Math.ceil(qty / cells) });
   return plan;
@@ -2217,7 +2225,7 @@ function batchSummary() {
   bits.push(`<b>${pl.qty}</b> item${pl.qty === 1 ? "" : "s"}${pl.names.length ? " (personalized)" : ""}`);
   bits.push(`Bambu ${pl.P[3]}: ${pl.perPlate} per plate → <b>${pl.plates}</b> plate${pl.plates === 1 ? "" : "s"}`);
   if (pl.jigErr) bits.push(esc(pl.jigErr));
-  else bits.push(`Jig ${n1(pl.jigW)} × ${n1(pl.jigH)} × ${pl.jigT} mm with <b>${pl.cells}</b> pockets (${pl.cols} × ${pl.rows}, ${n1(pl.pd)} mm deep) → <b>${pl.sheets}</b> Omni run${pl.sheets === 1 ? "" : "s"}` + (pl.qty % pl.cells ? ` (last run ${pl.qty % pl.cells})` : "") + (pl.names.length ? "" : `; identical items, so ${pl.qty % pl.cells && pl.sheets > 1 ? "2 sheet images are" : "1 sheet image is"} reused`));
+  else bits.push((pl.jigNote ? esc(pl.jigNote) + " " : "") + `Jig ${n1(pl.jigW)} × ${n1(pl.jigH)} × ${pl.jigT} mm with <b>${pl.cells}</b> pockets (${pl.cols} × ${pl.rows}, ${n1(pl.pd)} mm deep) → <b>${pl.sheets}</b> Omni run${pl.sheets === 1 ? "" : "s"}` + (pl.qty % pl.cells ? ` (last run ${pl.qty % pl.cells})` : "") + (pl.names.length ? "" : `; identical items, so ${pl.qty % pl.cells && pl.sheets > 1 ? "2 sheet images are" : "1 sheet image is"} reused`));
   el.className = pl.jigErr ? "status" : "status ok"; el.innerHTML = bits.join(" · ");
   drawBatchPreview(pl);
 }
@@ -2236,7 +2244,7 @@ function drawBatchPreview(pl) {
   g.fillStyle = "#c8f26d"; g.beginPath(); g.moveTo(3 * k, 3 * k); g.lineTo(9 * k, 3 * k); g.lineTo(3 * k, 9 * k); g.closePath(); g.fill(); g.restore();
 }
 const batchKey = pl => [pl.T.length, pl.b.join(","), pl.clear, pl.orient].join("|");
-for (const id of ["bQty", "bBed", "bGap", "bNames", "bClear", "bDepth", "bJigW"]) $(id).addEventListener("input", () => { batchSummary(); priceUpdate(); });
+for (const id of ["bQty", "bBed", "bGap", "bNames", "bClear", "bDepth", "bJigW", "bPockets"]) $(id).addEventListener("input", () => { batchSummary(); priceUpdate(); });
 async function batchExport(jigOnly) {
   const st = $("bStatus"); if (draftGuard(st)) return; if (S.exporting) { st.textContent = "An export is already running."; return; }
   const pl = batchPlan(); if (pl.err) { st.className = "status err"; st.textContent = pl.err; return; }
@@ -2380,12 +2388,12 @@ function parseChanges(raw) {
   else if (has(/\b(add|with|give it)\b[^.]*\b(lip|raised edge|rim)\b/) && gen) add("2 mm raised edge", () => { $("mLip").checked = true; specFromControls(); }, 2);
   const nfcD = t.match(/(\d+(?:\.\d+)?)\s*mm\s*(?:nfc|chip)/);
   if (has(/\b(remove|no|without)\b[^.]*\b(nfc|chip)\b/)) add("remove NFC pocket", () => { S.spec.nfc = { ...(S.spec.nfc || {}), on: false }; syncNfc(); }, 2);
-  else if (has(/\b(add|with|put|insert|hidden)\b[^.]*\b(nfc|chip)\b/) || nfcD) add(`hidden ${nfcD ? nfcD[1] : (S.spec && S.spec.nfc && S.spec.nfc.d) || 26} mm NFC pocket`, () => { S.spec.nfc = { d: 26, h: 1.2, cover: 0.8, layer: 0.2, dx: 0, dy: 0, pos: "center", zmode: "top", ...(S.spec.nfc || {}), on: true, ...(nfcD ? { d: +nfcD[1] } : {}) }; syncNfc(); }, 2);
-  if (has(/\b(move|put|place|center|centre)\b[^.]*\b(nfc|chip|pocket)\b[^.]*\b(middle|center|centre)\b|\b(nfc|chip|pocket)\b[^.]*\b(in|to) the (middle|center|centre)\b/) && !has(/middle of the (thickness|depth)/)) add("NFC chip in the center of the print", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 0.8, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "center" }; syncNfc(); }, 2);
-  if (has(/\b(nfc|chip|pocket)\b[^.]*\bmiddle of the (thickness|depth)\b/)) add("NFC chip in the middle of the thickness", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 0.8, layer: 0.2, ...(S.spec.nfc || {}), on: true, zmode: "middle" }; syncNfc(); }, 2);
+  else if (has(/\b(add|with|put|insert|hidden)\b[^.]*\b(nfc|chip)\b/) || nfcD) add(`hidden ${nfcD ? nfcD[1] : (S.spec && S.spec.nfc && S.spec.nfc.d) || 26} mm NFC pocket`, () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, dx: 0, dy: 0, pos: "center", zmode: "top", ...(S.spec.nfc || {}), on: true, ...(nfcD ? { d: +nfcD[1] } : {}) }; syncNfc(); }, 2);
+  if (has(/\b(move|put|place|center|centre)\b[^.]*\b(nfc|chip|pocket)\b[^.]*\b(middle|center|centre)\b|\b(nfc|chip|pocket)\b[^.]*\b(in|to) the (middle|center|centre)\b/) && !has(/middle of the (thickness|depth)/)) add("NFC chip in the center of the print", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "center" }; syncNfc(); }, 2);
+  if (has(/\b(nfc|chip|pocket)\b[^.]*\bmiddle of the (thickness|depth)\b/)) add("NFC chip in the middle of the thickness", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, zmode: "middle" }; syncNfc(); }, 2);
   const fromEdge = t.match(/\b(?:nfc|chip|pocket)\b[^.]*?(\d+(?:\.\d+)?)\s*mm\s+from\s+the\s+(bottom|top|left|right)/);
-  if (fromEdge) { const v = +fromEdge[1], e = fromEdge[2]; add(`NFC chip ${v} mm from the ${e}`, () => { const k = S.base && S.base.pocket, nf = { d: 26, h: 1.2, cover: 0.8, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "manual" }; nf.x = nf.x != null && nf.pos === "manual" && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.x : k ? +k.relX.toFixed(2) : S.dims.x / 2; nf.y = nf.y != null && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.y : k ? +k.relY.toFixed(2) : S.dims.y / 2; if (e === "bottom") nf.y = v; if (e === "top") nf.y = S.dims.y - v; if (e === "left") nf.x = v; if (e === "right") nf.x = S.dims.x - v; S.spec.nfc = nf; syncNfc(); }, 2); }
-  if (has(/\b(nfc|chip|pocket)\b[^.]*\bwidest\b/)) add("NFC chip at the widest spot", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 0.8, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "auto" }; syncNfc(); }, 2);
+  if (fromEdge) { const v = +fromEdge[1], e = fromEdge[2]; add(`NFC chip ${v} mm from the ${e}`, () => { const k = S.base && S.base.pocket, nf = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "manual" }; nf.x = nf.x != null && nf.pos === "manual" && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.x : k ? +k.relX.toFixed(2) : S.dims.x / 2; nf.y = nf.y != null && S.spec.nfc && S.spec.nfc.pos === "manual" ? nf.y : k ? +k.relY.toFixed(2) : S.dims.y / 2; if (e === "bottom") nf.y = v; if (e === "top") nf.y = S.dims.y - v; if (e === "left") nf.x = v; if (e === "right") nf.x = S.dims.x - v; S.spec.nfc = nf; syncNfc(); }, 2); }
+  if (has(/\b(nfc|chip|pocket)\b[^.]*\bwidest\b/)) add("NFC chip at the widest spot", () => { S.spec.nfc = { d: 26, h: 1.2, cover: 1.2, layer: 0.2, ...(S.spec.nfc || {}), on: true, pos: "auto" }; syncNfc(); }, 2);
   const lean = t.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree)/);
   if (has(/\b(remove|no|without)\b[^.]*\b(stand|base)\b/)) add("remove stand base", async () => { const old = { ...S.spec }; S.spec.stand = { ...(S.spec.stand || {}), on: false }; syncNfc(); if (old.kind === "shape") await keepBodySize(old, S.spec); }, 2);
   else if (has(/\b(stand|easel|holder|sign base|base that holds)\b/) && has(/\b(add|make|with|turn|into|give)\b/)) add(`stand base${lean ? ` leaning ${lean[1]}°` : ""}`, async () => { const old = { ...S.spec }; S.spec.stand = { on: true, angle: lean ? +lean[1] : 10, d: 40, h: 14, w: 0, slot: 9, clear: 0.35, ...(old.stand && old.stand.on ? old.stand : {}), ...(lean ? { angle: +lean[1] } : {}) }; syncNfc(); if (old.kind === "shape") await keepBodySize(old, S.spec); }, 2);
@@ -3435,7 +3443,7 @@ function updateInfo() {
   else if (S.stand) { const b = S.stand; $("standInfo").className = "status ok"; $("standInfo").textContent = `Base ${n1(b.w)} × ${n1(b.d)} × ${n1(b.h)} mm. Slot ${b.slotW.toFixed(2)} mm wide (part ${(b.slotW - (+$("standClear").value || 0)).toFixed(2)} mm + clearance), ${n1(b.slotDepth)} mm deep, leaning back ${b.angle}°.`; }
   else $("standInfo").textContent = "";
   $("xStand").classList.toggle("hidden", !(S.stand && !S.stand.err));
-  if (S.base && S.base.pocket) { const k = S.base.pocket; if (document.activeElement !== $("nfcX")) $("nfcX").value = +k.relX.toFixed(2); if (document.activeElement !== $("nfcY")) $("nfcY").value = +k.relY.toFixed(2); $("nfcInfo").className = "status ok"; $("nfcInfo").textContent = `Chip center at X ${k.relX.toFixed(1)} mm, Y ${k.relY.toFixed(1)} mm from the bottom-left corner. Pocket ${(k.r * 2).toFixed(1)} mm round × ${k.depth.toFixed(2)} mm deep, from ${k.bot.toFixed(2)} to ${k.top.toFixed(2)} mm, with ${k.cover.toFixed(2)} mm of plastic on top. In Bambu Studio, add a pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer} at ${k.layer} mm layers), drop the chip in when it pauses, then resume.`; }
+  if (S.base && S.base.pocket) { const k = S.base.pocket; if (document.activeElement !== $("nfcX")) $("nfcX").value = +k.relX.toFixed(2); if (document.activeElement !== $("nfcY")) $("nfcY").value = +k.relY.toFixed(2); $("nfcInfo").className = "status ok"; $("nfcInfo").textContent = `Chip center at X ${k.relX.toFixed(1)} mm, Y ${k.relY.toFixed(1)} mm from the bottom-left corner. Pocket ${(k.r * 2).toFixed(1)} mm round × ${k.depth.toFixed(2)} mm deep, from ${k.bot.toFixed(2)} to ${k.top.toFixed(2)} mm, with ${k.cover.toFixed(2)} mm of plastic on top${k.coverRaised ? ` (raised so Bambu prints a full, smooth top over the chip)` : ""} and at least 2 mm all round, so it's fully hidden. In Bambu Studio, add a pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer} at ${k.layer} mm layers), drop the chip in when it pauses, then resume. For a seamless one-piece look: slice at the same ${k.layer} mm layer height, set Seam position to Back, keep the door closed and resume within a minute or two so the part stays warm.`; }
   else if (S.base && S.base.pocketErr) { $("nfcInfo").className = "status err"; $("nfcInfo").textContent = S.base.pocketErr; }
   else $("nfcInfo").textContent = "";
   $("reliefRow").classList.toggle("hidden", $("fStyle").value !== "relief");
@@ -3480,7 +3488,7 @@ function specFromProduct(key, overrides) {
 }
 function syncNfc() {
   const sb = (S.spec && S.spec.stand) || {}; $("standOn").checked = !!sb.on; $("standAngle").value = sb.angle != null ? sb.angle : 10; $("standD").value = sb.d || 40; $("standH").value = sb.h || 14; $("standW").value = sb.w || 0; $("standSlot").value = sb.slot || 9; $("standClear").value = sb.clear != null ? sb.clear : 0.35;
-  const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 0.8;
+  const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 1.2;
   $("nfcLayer").value = String(nf.layer || 0.2); if (nf.pos === "manual") { if (document.activeElement !== $("nfcX")) $("nfcX").value = nf.x != null ? nf.x : ""; if (document.activeElement !== $("nfcY")) $("nfcY").value = nf.y != null ? nf.y : ""; } $("nfcPos").value = nf.pos || "center"; $("nfcZ").value = nf.zmode || "top";
 }
 function syncModelControls() {
@@ -4219,15 +4227,19 @@ const TESTS = [
     return [ok, `${tMeshTxt(m)}; floor ${fl.W.toFixed(2)} mm wide at z ${fl.d.toFixed(2)}, lip top z ${lipTop.d.toFixed(2)}; volume ${m.v.volume.toFixed(0)} vs ${exp.toFixed(0)} mm³`];
   }],
   ["8c · coaster with hidden 26 mm NFC pocket", async () => {
-    const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 99.98, 99.99, 4), base = { tris: m.r.tris }, pk = addPocket(base, { on: true, d: 26, h: 1.2, cover: 0.8, layer: 0.2, dx: 0, dy: 0 });
+    const m = await tBuildShape({ shape: "oval", lip: true, lipH: 2, lipW: 3 }, 99.98, 99.99, 4), base = { tris: m.r.tris }, pk = addPocket(base, { on: true, d: 26, h: 1.2, cover: 1.2, layer: 0.2, dx: 0, dy: 0 });
     if (pk.err) return [false, pk.err];
     const v = validateMesh(base.tris), v0 = m.v, hole = v0.volume - v.volume, exp = Math.PI * 13 * 13 * 1.2, d = tDims(triBBox(base.tris));
-    const ok = v.ok && v.shells === 2 && v.cavities === 1 && v.inverted === 0 && near(hole, exp, exp * 0.01) && near(pk.top, 3.2, 1e-6) && near(pk.bot, 2.0, 1e-6) && near(pk.pauseZ, 3.4, 1e-6) && near(pk.cx, 49.99, 0.3) && near(pk.cy, 49.995, 0.3) && near(d[2], 6, 0.001);
+    const ok = v.ok && v.shells === 2 && v.cavities === 1 && v.inverted === 0 && near(hole, exp, exp * 0.01) && near(pk.top, 2.8, 1e-6) && near(pk.bot, 1.6, 1e-6) && near(pk.pauseZ, 3.0, 1e-6) && near(pk.cx, 49.99, 0.3) && near(pk.cy, 49.995, 0.3) && near(d[2], 6, 0.001);
     const rt = validateMesh(v.clean); // the exported mesh must keep the pocket hollow
     return [ok && rt.cavities === 1 && rt.inverted === 0, `${v.shells} shells, ${v.cavities} sealed pocket, pocket volume ${hole.toFixed(1)} vs ${exp.toFixed(1)} mm³, z ${pk.bot}-${pk.top} mm, centre ${pk.cx.toFixed(2)}, ${pk.cy.toFixed(2)}; pause at ${pk.pauseZ} mm (layer ${pk.pauseLayer})`];
   }],
+  ["8e · NFC pocket is Bambu-safe: thin lid raised, 2 mm side wall enforced", async () => {
+    const m = await tBuildShape({ shape: "oval" }, 50, 50, 4), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 0.8, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 47, h: 1.2, cover: 1.2, layer: 0.2 });
+    return [!pk.err && near(pk.cover, 1.2, 1e-6) && pk.coverRaised === true && near(pk.top, 2.8, 1e-6) && !!pk2.err && /2 mm/.test(pk2.err), `asked 0.8 mm lid → ${pk.cover} mm (raised ${pk.coverRaised}), pocket ${pk.bot}-${pk.top} mm · 47 mm pocket in 50 mm part: "${pk2.err}"`];
+  }],
   ["8d · NFC pocket refuses a part that is too thin", async () => {
-    const m = await tBuildShape({ shape: "oval" }, 50, 50, 2), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 0.8, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 60, h: 0.4, cover: 0.6, layer: 0.2 });
+    const m = await tBuildShape({ shape: "oval" }, 50, 50, 2), pk = addPocket({ tris: m.r.tris }, { on: true, d: 26, h: 1.2, cover: 1.2, layer: 0.2 }), pk2 = addPocket({ tris: m.r.tris }, { on: true, d: 60, h: 0.4, cover: 0.6, layer: 0.2 });
     return [!!pk.err && !!pk2.err, `2 mm part: "${pk.err}" · too wide: "${pk2.err}"`];
   }],
   ["Shape · rectangle, heart and concave C outline", async () => {
@@ -4691,7 +4703,7 @@ for (const id of ["standOn", "standAngle", "standD", "standH", "standW", "standS
 for (const id of ["nfcOn", "nfcD", "nfcH", "nfcCover", "nfcLayer", "nfcX", "nfcY", "nfcPos", "nfcZ"]) $(id).addEventListener("input", () => {
   if (!S.spec) return;
   const prev = S.spec.nfc || {}, typedXY = id === "nfcX" || id === "nfcY", cur = S.base && S.base.pocket;
-  S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 0.8, 0.4, 5), layer: +$("nfcLayer").value || 0.2, pos: typedXY ? "manual" : $("nfcPos").value, zmode: $("nfcZ").value,
+  S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 1.2, 0.4, 5), layer: +$("nfcLayer").value || 0.2, pos: typedXY ? "manual" : $("nfcPos").value, zmode: $("nfcZ").value,
     x: typedXY || $("nfcPos").value === "manual" ? (+$("nfcX").value || 0) : prev.x, y: typedXY || $("nfcPos").value === "manual" ? (+$("nfcY").value || 0) : prev.y };
   if (id === "nfcPos" && $("nfcPos").value === "manual" && cur && !isFinite(prev.x)) { S.spec.nfc.x = +cur.relX.toFixed(2); S.spec.nfc.y = +cur.relY.toFixed(2); }
   if (typedXY) $("nfcPos").value = "manual";
@@ -4734,7 +4746,7 @@ function planFromDescription(P) {
   else if (x == null) x = y / ratio; else if (y == null) y = x * ratio;
   const z = P.z || { stand: 4, keychain: 4, coaster: 6, plate: 4, hanging: 4, bagtag: 3.5, ornament: 3, magnet: 3, nameplate: 4 }[P.product];
   const spec = { kind: "shape", shape, radius: shape === "rect" ? 0 : 6, margin: 2, fillHoles: true, ring: P.ring ? "top" : "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!P.lip, lipH: 2, lipW: 3, product: P.product === "coaster" ? "coaster" : "custom" };
-  if (P.nfc) spec.nfc = { on: true, d: P.nfcD || 26, h: 1.2, cover: 0.8, layer: 0.2, dx: 0, dy: 0, pos: P.nfcWide ? "auto" : "center", zmode: P.nfcMid ? "middle" : "top" };
+  if (P.nfc) spec.nfc = { on: true, d: P.nfcD || 26, h: 1.2, cover: 1.2, layer: 0.2, dx: 0, dy: 0, pos: P.nfcWide ? "auto" : "center", zmode: P.nfcMid ? "middle" : "top" };
   if (P.product === "stand") spec.stand = { on: true, angle: P.angle != null ? P.angle : 10, d: 40, h: 14, w: 0, slot: 9, clear: 0.35 };
   return { spec, dims: { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) }, lock: shape === "oval" || shape === "heart" || shape === "hexagon" };
 }
