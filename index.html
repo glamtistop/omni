@@ -680,7 +680,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <h3>Base color & background</h3>
         <div class="f">What color is the 3D-printed base?<div class="sw" id="fSw"></div></div>
         <label class="f" for="bgFill">Background on the print
-          <select id="bgFill"><option value="ink">Print a background color</option><option value="filament">No background ink, let the filament show</option></select>
+          <select id="bgFill"><option value="filament" selected>No background, just the artwork</option><option value="ink">Print a background color</option></select>
         </label>
         <div class="row" id="bgRow">
           <label class="f" for="bg1">Background<input type="color" id="bg1" value="#2f6fd6"></label>
@@ -957,8 +957,8 @@ const FILAMENTS = [["White","#f4f4f0"],["Black","#1d1d1f"],["Gray","#8a8d91"],["
 const PRINTERS = { a1mini: [180,180,180,"A1 mini"], a1: [256,256,256,"A1"], p1: [256,256,256,"P1S / P1P"], x1: [256,256,256,"X1C / X1E"], h2d: [350,320,325,"H2D"] };
 const OMNI_BED = { std: [330,122], large: [330,420] };
 const PRODUCTS = {
-  keychain:  { label: "Keychain",  kind: "cutout", x: 55, y: 35, z: 3, ring: "top", margin: 2, driver: "x" },
-  bagtag:    { label: "Bag tag",   kind: "cutout", x: 55, y: 76, z: 3.5, ring: "top", margin: 1.5, driver: "y" },
+  keychain:  { label: "Keychain",  kind: "cutout", x: 55, y: 35, z: 3, ring: "top", margin: 0, driver: "x" },
+  bagtag:    { label: "Bag tag",   kind: "cutout", x: 55, y: 76, z: 3.5, ring: "top", margin: 0, driver: "y" },
   nameplate: { label: "Nameplate", kind: "shape", shape: "rounded", x: 120, y: 35, z: 4, ring: "none", radius: 5 },
   coaster:   { label: "Coaster",   kind: "shape", shape: "oval", x: 99.98, y: 99.99, z: 6, ring: "none", lip: true },
   ornament:  { label: "Ornament",  kind: "shape", shape: "oval", x: 75, y: 75, z: 3, ring: "top" },
@@ -3484,7 +3484,7 @@ function autoName() { if (S.spec && S.spec.descName && !$("ltText").value.trim()
    ========================================================= */
 function specFromProduct(key, overrides) {
   const p = PRODUCTS[key] || PRODUCTS.keychain;
-  return Object.assign({ kind: p.kind, shape: p.shape || "rounded", radius: p.radius || 4, margin: p.margin || 2, fillHoles: true, ring: p.ring || "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!p.lip, lipH: 2, lipW: 3, product: key }, overrides || {});
+  return Object.assign({ kind: p.kind, shape: p.shape || "rounded", radius: p.radius || 4, margin: p.margin != null ? p.margin : 0, fillHoles: true, ring: p.ring || "none", holeD: 4, ringDx: 0, ringDy: 0, lip: !!p.lip, lipH: 2, lipW: 3, product: key }, overrides || {});
 }
 function syncNfc() {
   const sb = (S.spec && S.spec.stand) || {}; $("standOn").checked = !!sb.on; $("standAngle").value = sb.angle != null ? sb.angle : 10; $("standD").value = sb.d || 40; $("standH").value = sb.h || 14; $("standW").value = sb.w || 0; $("standSlot").value = sb.slot || 9; $("standClear").value = sb.clear != null ? sb.clear : 0.35;
@@ -3866,11 +3866,11 @@ Reply with only one JSON object with these keys:
 "sizeBy": "width" or "height"; "widthMm"; "heightMm"; "thicknessMm" (2 to 6).
 "cornerMm": corner radius for "rounded".
 "ring": "none", "top", "top-left", "top-right" or "left": key ring hole tab. Use one for keychains, bag tags and ornaments unless told otherwise.
-"rimMm": silhouette and textOutline only: solid rim added around the outline, 0.8 to 3 (larger for small parts).
+"rimMm": textOutline only: solid rim added around the letters to join them, 0.8 to 3 (larger for small parts). Silhouettes get no rim: the part follows the artwork edge exactly.
 "rimColor": hex color for that rim, usually the artwork's outline color. For textOutline this is the part's background color.
 "bg2", "gradient": textOutline only: a second background color and whether to fade to it.
 "baseColor": hex of the filament color if the customer says what color the 3D-printed base is, else null.
-"inkBackground": true unless the customer wants bare filament showing.
+"inkBackground": false unless the customer asks for a background color (true is fine for textOutline, where the background fills the rim).
 "summary": one short sentence describing this version.`;
 }
 function checkPrompt(req, d) {
@@ -3988,7 +3988,7 @@ async function applyPartDesign(d, o, sv) {
   if (typeof d.outlineMm === "number") $("ltOutlineW").value = clamp(d.outlineMm, 0, 2);
   $("ltPos").value = d.textBox ? "design" : "middle";
   if (hex(d.baseColor)) setFilament(d.baseColor); else setFilament(o.filament);
-  $("bgFill").value = d.inkBackground === false ? "filament" : "ink";
+  $("bgFill").value = d.inkBackground === true || (d.shape === "textOutline" && d.inkBackground !== false) ? "ink" : "filament";
   if (hex(d.rimColor)) $("bg1").value = d.rimColor; if (hex(d.bg2)) $("bg2").value = d.bg2; $("grad").checked = d.gradient === true && d.shape === "textOutline";
   $("borderW").value = 0; $("fStyle").value = o.style === "relief" ? "relief" : "flat"; $("fRaise").value = 0;
   // artwork
@@ -4002,7 +4002,7 @@ async function applyPartDesign(d, o, sv) {
   const pr = PRODUCTS[o.product] || PRODUCTS.keychain;
   const shape = ["rounded", "oval", "hexagon", "heart"].includes(d.shape) ? d.shape : null;
   const spec = shape ? specFromProduct(o.product, { kind: "shape", shape, radius: +d.cornerMm || pr.radius || 4, ring: ["none", "top", "top-left", "top-right", "left"].includes(d.ring) ? d.ring : pr.ring || "none" })
-                     : specFromProduct(o.product, { kind: "cutout", margin: clamp(+d.rimMm || pr.margin || 1.5, 0, 6), ring: ["none", "top", "top-left", "top-right", "left"].includes(d.ring) ? d.ring : pr.ring || "none" });
+                     : specFromProduct(o.product, { kind: "cutout", margin: d.shape === "textOutline" ? clamp(+d.rimMm || 1.5, 0, 6) : 0, ring: ["none", "top", "top-left", "top-right", "left"].includes(d.ring) ? d.ring : pr.ring || "none" });
   const z = clamp(+d.thicknessMm || pr.z, 1, 20);
   let driver = d.sizeBy === "height" ? "y" : "x", x = +d.widthMm || pr.x, y = +d.heightMm || pr.y;
   if (o.size) { driver = o.size.side; if (driver === "y") { y = o.size.mm; if (shape && d.widthMm && d.heightMm) x = y * d.widthMm / d.heightMm; } else { x = o.size.mm; if (shape && d.widthMm && d.heightMm) y = x * d.heightMm / d.widthMm; } }
@@ -4619,7 +4619,7 @@ $("asisBtn").onclick = async () => {
 $("textBtn").onclick = () => {
   const o = createOpts(), words = $("nameText").value.trim() || "Your Name";
   $("ltText").value = words; $("ltPos").value = "middle"; S.artImg = null; S.design = null; setFilament(o.filament);
-  $("ltFont").value = "Pacifico"; $("ltFg").value = "#ffffff"; $("ltOutline").value = "#1b2a5a"; $("ltOutlineW").value = 0.5; $("bg1").value = "#2f6fd6"; $("bg2").value = "#7fd0ff"; $("grad").checked = true; $("bgFill").value = "ink";
+  $("ltFont").value = "Pacifico"; $("ltFg").value = "#ffffff"; $("ltOutline").value = "#1b2a5a"; $("ltOutlineW").value = 0.5; $("bg1").value = "#2f6fd6"; $("bg2").value = "#7fd0ff"; $("grad").checked = true; $("bgFill").value = "filament";
   const pr = PRODUCTS[o.product], spec = specFromProduct(o.product); let dims = { x: pr.x, y: pr.y, z: pr.z }, driver = "x";
   if (o.size) { driver = o.size.side; dims[driver] = o.size.mm; }
   $("fStyle").value = o.style; setMode(spec.kind === "cutout" ? "cover" : "contain");
@@ -4774,7 +4774,7 @@ $("descBtn").onclick = async () => {
     try { const im = await fileToImage(ref.file), src = toCanvas(im, 2400); S.artImg = prepareArt(src, "auto", 18, null, ref.file.name.replace(/\.[^.]+$/, ""), im.naturalWidth); }
     catch (e) { $("descParse").className = "status err"; $("descParse").textContent = e.message; return; }
     if (!P.shape && P.product !== "coaster" && P.product !== "stand") { // no shape named: the part follows the image's outline
-      const asp = S.artImg.h / S.artImg.w; plan.spec.kind = "cutout"; plan.spec.margin = 1.5; plan.spec.fillHoles = true; plan.lock = true;
+      const asp = S.artImg.h / S.artImg.w; plan.spec.kind = "cutout"; plan.spec.margin = 0; plan.spec.fillHoles = true; plan.lock = true;
       if (!(P.x || P.y)) { const L = P.size || { keychain: 55, plate: 80 }[P.product] || 60; if (asp <= 1) { plan.dims.x = L; plan.dims.y = +(L * asp).toFixed(2); } else { plan.dims.y = L; plan.dims.x = +(L / asp).toFixed(2); } }
       plan.spec.descName = (S.artImg.label || "image") + " " + P.product;
     }
