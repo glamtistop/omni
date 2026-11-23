@@ -34,6 +34,10 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+.xbox { margin-top: 10px; padding: 12px 14px; border: 2px solid var(--accent); border-radius: 14px; display: grid; gap: 6px; }
+.xbox-t { font: 600 13px var(--font-display); color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+.xbox-v { display: flex; flex-wrap: wrap; gap: 18px; font: 600 clamp(22px, 4vw, 30px) var(--font-display); } .xbox-v b { font-variant-numeric: tabular-nums; }
+.xbox-n { font-size: 13px; color: var(--muted); } .xbox .btn { justify-self: start; }
 body { background: radial-gradient(900px 500px at 15% -10%, rgba(44,156,184,.28), transparent 60%), radial-gradient(700px 400px at 100% 0%, rgba(200,242,109,.07), transparent 60%), var(--bg); background-attachment: fixed; color: var(--ink); font: 15px/1.45 var(--font-body); }
 button { font-family: inherit; }
 .top { display: flex; align-items: center; gap: 10px; padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 12px max(18px, env(safe-area-inset-left)); position: sticky; top: 0; z-index: 20; background: #0a1113; border-bottom: 1px solid var(--line); }
@@ -460,6 +464,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <button class="btn small" id="pinBtn" aria-pressed="false">📌 Keep this size for new images</button>
         </div>
         <p class="status ok hidden" id="pinNote"></p>
+        <div class="xbox hidden" data-xbox><div class="xbox-t">Enter in xTool Creative Space</div><div class="xbox-v"><span>W <b data-xw></b> mm</span><span>H <b data-xh></b> mm</span></div><div class="xbox-n">Lock the ratio · rotation 0° · <span data-xup></span></div><button class="btn small" data-xcopy>Copy size</button></div>
         <p class="note" id="dimNote">Overall size, including the key ring tab and raised details. This is what Bambu Studio will show.</p>
       </section>
 
@@ -738,6 +743,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
       </section>
       <section class="card c">
         <h3>② Omni · print image</h3>
+        <div class="xbox hidden" data-xbox><div class="xbox-t">Enter in xTool Creative Space</div><div class="xbox-v"><span>W <b data-xw></b> mm</span><span>H <b data-xh></b> mm</span></div><div class="xbox-n">Lock the ratio · rotation 0° · <span data-xup></span></div><button class="btn small" data-xcopy>Copy size</button></div>
         <p class="note" id="xImgNote"></p>
         <p class="status ok" id="xToolNote"></p>
         <div class="btns">
@@ -1525,16 +1531,12 @@ async function genBase() {
   let src = null;
   if (sp.kind === "cutout") { src = cutSource(); if (!src) throw new UserError("Add an image or some lettering in Design so the outline has something to follow."); }
   if (boxOn() && sp.kind === "cutout") {
-    const B = S.box; d.z = B.z; const tb = Math.max(0.6, B.z - Math.max(fh, lipH));
-    if (bgBoxOn()) { // exactly the pinned size: rounded plate (same key ring) with the background color, artwork fitted inside
-      const sq = { ...sp, kind: "shape", shape: "rounded", radius: +sp.radius || 4 }, dd = { x: B.x, y: B.y, z: B.z };
-      const r = await buildBase(sq, dd, false, "x", null, tb); d.x = B.x; d.y = B.y; r.bgBox = true; return r;
-    }
-    let dd = { x: B.x, y: B.y, z: B.z }, r = await buildBase(sp, dd, true, "x", src, tb); // fit inside X × Y, no stretching
-    if (dd.y > B.y + 0.02) { dd = { x: B.x, y: B.y, z: B.z }; r = await buildBase(sp, dd, true, "y", src, tb); }
+    const B = S.box, sc = cutSpec(sp); d.z = B.z; const tb = Math.max(0.6, B.z - Math.max(fh, lipH));
+    let dd = { x: B.x, y: B.y, z: B.z }, r = await buildBase(sc, dd, true, "x", src, tb); // fit inside X × Y (band included), no stretching
+    if (dd.y > B.y + 0.02) { dd = { x: B.x, y: B.y, z: B.z }; r = await buildBase(sc, dd, true, "y", src, tb); }
     d.x = dd.x; d.y = dd.y; return r;
   }
-  return await buildBase(sp, d, S.lock, S.driver, src, t);
+  return await buildBase(sp.kind === "cutout" ? cutSpec(sp) : sp, d, S.lock, S.driver, src, t);
 }
 
 /* =========================================================
@@ -1751,8 +1753,7 @@ function getMode() { return document.querySelector('input[name="pmode"]:checked'
 function setMode(m) { document.querySelector(`input[name="pmode"][value="${m}"]`).checked = true; }
 function placementOpts() {
   const onTop = S.base && S.base.kind === "shape" && S.surf && S.surf.isTop && S.surfSel === "top" && !(S.spec.ring !== "none" && $("pTab").checked);
-  const m0 = getMode(), mode = S.base && S.base.bgBox && (m0 === "cover" || m0 === "snap") ? "contain" : m0; // background plate: whole artwork fitted inside, never cropped
-  return { mode, rot: +$("pRot").value || 0, stretch: $("pStretch").checked, ox: u2mm(+$("pOx").value || 0), oy: u2mm(+$("pOy").value || 0), inset: Math.max(0, u2mm(+$("pInset").value || 0)), inner: onTop ? S.base.inner : null, body: onTop ? S.base.body : null, keepW: S.keepW, keepH: S.keepH };
+  return { mode: getMode(), rot: +$("pRot").value || 0, stretch: $("pStretch").checked, ox: u2mm(+$("pOx").value || 0), oy: u2mm(+$("pOy").value || 0), inset: Math.max(0, u2mm(+$("pInset").value || 0)), inner: onTop ? S.base.inner : null, body: onTop ? S.base.body : null, keepW: S.keepW, keepH: S.keepH };
 }
 function containBox(sf, o) {
   if (o.inner) { const r = o.inner; return { x: r.x * sf.W, y: r.y * sf.H, w: r.w * sf.W, h: r.h * sf.H }; }
@@ -3431,7 +3432,15 @@ function writeDims() {
   $("dimUnitNote").textContent = S.units;
   document.querySelectorAll(".unit[id^=p]").forEach(el => el.dataset.unit = S.units);
 }
+function xboxUpdate() { // the exact image size to type into xTool: always the print surface, which is the part's own size for the top face
+  const sf = S.surf, on = !!(S.base && sf); let up = "";
+  if (on) { const n = sf.n || [0, 0, 1]; up = sf.isProj || n[2] > 0.99 ? (S.spec && S.spec.ring && S.spec.ring !== "none" ? "key ring at the top" : "back edge at the top") : sf.label.toLowerCase() + " facing up"; }
+  document.querySelectorAll("[data-xbox]").forEach(el => { el.classList.toggle("hidden", !on); if (!on) return;
+    el.querySelector("[data-xw]").textContent = sf.W.toFixed(2); el.querySelector("[data-xh]").textContent = sf.H.toFixed(2); el.querySelector("[data-xup]").textContent = up; });
+}
+document.querySelectorAll("[data-xcopy]").forEach(b => b.onclick = async () => { if (!S.surf) return; const t = `W ${S.surf.W.toFixed(2)} mm × H ${S.surf.H.toFixed(2)} mm`; try { await navigator.clipboard.writeText(t); b.textContent = "Copied ✓"; } catch (e) { b.textContent = t; } setTimeout(() => b.textContent = "Copy size", 1800); });
 function updateInfo() {
+  try { xboxUpdate(); } catch (e) { console.error(e); }
   const sf = S.surf, wb = V.wb || (S.base ? worldBBox() : null);
   if (!S.base) { $("specs").innerHTML = ""; return; }
   const tri = allTris().length / 9;
@@ -3517,16 +3526,18 @@ function syncModelControls() {
 S.box = (() => { try { const v = JSON.parse(localStorage.getItem("omni-size-box") || "null"); if (v && v.x > 0 && v.y > 0 && v.z > 0) return v; } catch (e) {} return { on: false, x: 55, y: 35, z: 4.2 }; })();
 function saveBox() { try { localStorage.setItem("omni-size-box", JSON.stringify(S.box)); } catch (e) {} }
 const boxOn = () => !!(S.box && S.box.on && S.spec && S.spec.kind !== "stl");
-const bgBoxOn = () => boxOn() && S.spec.kind === "cutout" && $("bgFill").value === "ink"; // background color chosen: the part is exactly the pinned size
+// background color chosen on an artwork-shaped part: keep the artwork's shape and add a band of the background color around it (part of the size)
+const BG_RIM = 2;
+const bgRimOn = () => !!(S.spec && S.spec.kind === "cutout" && $("bgFill").value === "ink");
+const cutSpec = sp => sp.kind === "cutout" && $("bgFill").value === "ink" && !(+sp.margin > 0) ? { ...sp, margin: BG_RIM } : sp;
 function pinUi() {
   const b = S.box, on = !!b.on, txt = `${n1(b.x)} × ${n1(b.y)} × ${n1(b.z)} mm`;
   $("pinBtn").setAttribute("aria-pressed", on); $("pinBtn").textContent = on ? `📌 Size kept: ${txt}` : "📌 Keep this size for new images";
   $("pinCreateNote").classList.toggle("hidden", !on); $("pinCreateNote").textContent = on ? `New parts use your kept size: ${txt} (change it under Exact dimensions).` : "";
   const pn = $("pinNote"); pn.classList.toggle("hidden", !on || !S.spec || S.spec.kind === "stl");
   if (on && S.spec && S.spec.kind !== "stl") {
-    const fit = S.spec.kind === "cutout" && !bgBoxOn(), act = `${n1(S.dims.x)} × ${n1(S.dims.y)} mm`;
-    pn.textContent = bgBoxOn() ? `The part is exactly ${n1(b.x)} × ${n1(b.y)} mm with your background color filling it; the artwork is fitted inside without stretching.`
-      : fit ? `The part fits inside ${n1(b.x)} × ${n1(b.y)} mm without stretching the artwork: actual size ${act}. Choose a background color (Design ▸ Base color & background) to fill the full ${n1(b.x)} × ${n1(b.y)} mm.`
+    const act = `${n1(S.dims.x)} × ${n1(S.dims.y)} mm`;
+    pn.textContent = S.spec.kind === "cutout" ? `The part keeps the artwork's shape and fits inside ${n1(b.x)} × ${n1(b.y)} mm without stretching: actual size ${act} × ${n1(b.z)} mm${bgRimOn() ? `, including a ${BG_RIM} mm band of your background color around the artwork` : ""}.`
       : `The part is ${n1(b.x)} × ${n1(b.y)} × ${n1(b.z)} mm.`;
   }
 }
@@ -4702,7 +4713,7 @@ $("pinBtn").onclick = () => {
   if (S.box.on) S.box.on = false; else { const d = S.dims || S.box; S.box = { on: true, x: +(+d.x).toFixed(2), y: +(+d.y).toFixed(2), z: +(+d.z).toFixed(2) }; }
   saveBox(); pinUi(); writeDims(); if (S.spec && S.spec.kind === "cutout") scheduleGeo(true);
 };
-$("bgFill").addEventListener("input", () => { if (boxOn() && S.spec.kind === "cutout") { setMode($("bgFill").value === "ink" ? "contain" : "cover"); scheduleGeo(); } });
+$("bgFill").addEventListener("input", () => { if (S.spec && S.spec.kind === "cutout" && !(+S.spec.margin > 0)) scheduleGeo(); }); // background band on/off changes the outline
 pinUi();
 $("resetBtn").onclick = () => { if (boxOn()) return; if (S.dims0) { S.dims = { ...S.dims0 }; writeDims(); scheduleGeo(true); } };
 for (const k of ["x", "y", "z"]) {
