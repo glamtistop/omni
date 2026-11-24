@@ -38,6 +38,7 @@ html, body { margin: 0; height: 100%; }
 .xbox-t { font: 600 13px var(--font-display); color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
 .xbox-v { display: flex; flex-wrap: wrap; gap: 18px; font: 600 clamp(22px, 4vw, 30px) var(--font-display); } .xbox-v b { font-variant-numeric: tabular-nums; }
 .smlist { margin: 8px 0 0; padding-left: 20px; line-height: 1.5; font-size: 14px; } .smlist li { margin: 2px 0; }
+.status.warn { color: #ffcf5a; }
 .xbox-n { font-size: 13px; color: var(--muted); } .xbox .btn { justify-self: start; }
 body { background: radial-gradient(900px 500px at 15% -10%, rgba(44,156,184,.28), transparent 60%), radial-gradient(700px 400px at 100% 0%, rgba(200,242,109,.07), transparent 60%), var(--bg); background-attachment: fixed; color: var(--ink); font: 15px/1.45 var(--font-body); }
 button { font-family: inherit; }
@@ -605,7 +606,9 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
             <label class="f" for="nfcZ">Chip depth<select id="nfcZ"><option value="top">Just under the top</option><option value="middle">Middle of the thickness</option></select></label>
           </div>
           <div class="btns"><button class="btn small" id="nfcTap" aria-pressed="false">Tap the model to place the chip</button></div>
+          <label class="check"><input type="checkbox" id="nfcAuto" checked> Auto-size the part so the chip fits (recommended). Typing your own width or height turns this off.</label>
           <p class="status" id="nfcInfo"></p>
+          <div class="btns hidden" id="nfcRecRow"><button class="btn small primary" id="nfcUseRec">Use recommended size</button></div>
           <p class="note">The pocket is sealed inside the part, in the middle of the part unless you pick another spot. It's lined up with your layer height so the pause lands exactly on top of it, and always gets at least 1 bridge layer + your top layers above it (7 by default) and your wall around it (2 mm by default), so Bambu prints it as one solid, seamless piece. Set Bambu Studio's Top shell layers to the same number (see Smooth top for UV on the Export step). Shown as a dashed outline in the 3D view.</p>
         </div>
       </section>
@@ -656,7 +659,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
         <label class="radio"><input type="radio" name="pmode" value="keep"><span><b>Preserve artwork's physical size</b><span>The artwork keeps its millimeter size and is re-centered when you resize the model.</span></span></label>
         <div class="row">
           <label class="f" for="pW">Artwork width<span class="unit" data-unit="mm" id="pWu"><input type="number" id="pW" min="1" step="0.5"></span></label>
-          <label class="f" for="pH">Artwork height<span class="unit" data-unit="mm" id="pHu"><input type="number" id="pH" min="1" step="0.5" readonly></span></label>
+          <label class="f" for="pH">Artwork height<span class="unit" data-unit="mm" id="pHu"><input type="number" id="pH" min="1" step="0.5"></span></label>
         </div>
         <div class="row">
           <label class="f" for="pOx">Move right<span class="unit" data-unit="mm" id="pOxu"><input type="number" id="pOx" step="0.5" value="0"></span></label>
@@ -665,6 +668,7 @@ code { font: 500 12px var(--font-mono); color: var(--accent); }
           <label class="f" for="pRot">Rotate artwork<select id="pRot"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
         </div>
         <label class="check" id="pTabRow"><input type="checkbox" id="pTab"> Cover the key ring tab too (the image spans the whole part; the hole stays clear)</label>
+        <p class="status warn hidden" id="artWarn"></p>
         <label class="check"><input type="checkbox" id="pStretch"> Allow stretching (distorts the artwork; off = proportions always kept)</label>
         <p class="status" id="snapStatus"></p>
         <div class="btns nudge" role="group" aria-label="Move artwork">
@@ -3436,7 +3440,17 @@ async function rebuild() {
     S.nfcGrow = 1; S.nfcZ = 0; S.nfcAuto = null;
     let base = await genBase(); if (id !== genId) return;
     const nf = S.spec.nfc; base.pocket = null; base.pocketErr = null;
-    if (nf && nf.on) { const r = await fitPocket(base, nf, id); if (id !== genId) return; base = r.base; base.pocket = null; base.pocketErr = null; if (r.pk.err) base.pocketErr = r.pk.err; else base.pocket = r.pk; }
+    S.nfcRec = null;
+    if (nf && nf.on && nf.autoSize !== false) { const r = await fitPocket(base, nf, id); if (id !== genId) return; base = r.base; base.pocket = null; base.pocketErr = null; if (r.pk.err) base.pocketErr = r.pk.err; else base.pocket = r.pk; }
+    else if (nf && nf.on) { // your size: place the chip if it fits (widest spot if needed), otherwise work out the recommended size without applying it
+      let pk = addPocket(base, nf); if (pk.err && nf.pos !== "manual") { const p2 = addPocket(base, { ...nf, pos: "auto" }); if (!p2.err) pk = p2; }
+      if (pk.err && nf.pos !== "manual") {
+        const keep = { ...S.dims }, err = pk.err; const r = await fitPocket(base, nf, id); if (id !== genId) return;
+        const rec = !r.pk.err ? { x: S.dims.x, y: S.dims.y, z: S.dims.z } : null;
+        Object.assign(S.dims, keep); S.nfcGrow = 1; S.nfcZ = 0; S.nfcAuto = null; base = await genBase(); if (id !== genId) return;
+        S.nfcRec = rec; base.pocket = null; base.pocketErr = err + (rec ? ` Recommended size for this chip: ${n1(rec.x)} × ${n1(rec.y)} × ${n1(rec.z)} mm. Tap "Use recommended size", or make the chip smaller.` : "");
+      } else { base.pocket = pk.err ? null : pk; base.pocketErr = pk.err || null; }
+    }
     const st = S.spec.stand; S.stand = null;
     if (st && st.on) { const plT = base.lip || base.kind === "stl" || !base.t ? S.dims.z : base.t; S.stand = buildStandBase(st, S.dims.x, plT); }
     S.base = base;
@@ -3561,8 +3575,19 @@ function xboxUpdate() { // the exact image size to type into xTool: always the p
     el.querySelector("[data-xw]").textContent = sf.W.toFixed(2); el.querySelector("[data-xh]").textContent = sf.H.toFixed(2); el.querySelector("[data-xup]").textContent = up; });
 }
 document.querySelectorAll("[data-xcopy]").forEach(b => b.onclick = async () => { if (!S.surf) return; const t = `W ${S.surf.W.toFixed(2)} mm × H ${S.surf.H.toFixed(2)} mm`; try { await navigator.clipboard.writeText(t); b.textContent = "Copied ✓"; } catch (e) { b.textContent = t; } setTimeout(() => b.textContent = "Copy size", 1800); });
+// warn (don't block) when the artwork you sized runs past the part, or is stretched more than 3%
+function artWarnUpdate() {
+  const el = $("artWarn"), pl = S.pl, sf = S.surf, msgs = [];
+  if (pl && sf && pl.mode === "keep") {
+    const L = pl.cx - pl.fw / 2, R = pl.cx + pl.fw / 2, T = pl.cy - pl.fh / 2, B = pl.cy + pl.fh / 2, over = [];
+    if (L < -0.1) over.push(`${n1(-L)} mm on the left`); if (R > sf.W + 0.1) over.push(`${n1(R - sf.W)} mm on the right`); if (T < -0.1) over.push(`${n1(-T)} mm at the top`); if (B > sf.H + 0.1) over.push(`${n1(B - sf.H)} mm at the bottom`);
+    if (over.length) msgs.push(`The artwork (${n1(pl.fw)} × ${n1(pl.fh)} mm) runs past the part (${n1(sf.W)} × ${n1(sf.H)} mm): ${over.join(", ")} won't print. Make it smaller or pick "Fit artwork to surface · show all".`);
+  }
+  if (pl && Math.abs((pl.ky || 1) - 1) > 0.03) msgs.push(`The artwork is stretched ${Math.round(Math.abs(pl.ky - 1) * 100)}% out of proportion${pl.ky > 1 ? " (taller)" : " (wider)"}, so photos, faces and text will look distorted.`);
+  el.classList.toggle("hidden", !msgs.length); el.textContent = msgs.join(" ");
+}
 function updateInfo() {
-  try { xboxUpdate(); smoothUpdate(); } catch (e) { console.error(e); }
+  try { xboxUpdate(); smoothUpdate(); artWarnUpdate(); } catch (e) { console.error(e); }
   const sf = S.surf, wb = V.wb || (S.base ? worldBBox() : null);
   if (!S.base) { $("specs").innerHTML = ""; return; }
   const tri = allTris().length / 9;
@@ -3591,18 +3616,19 @@ function updateInfo() {
   else $("standInfo").textContent = "";
   $("xStand").classList.toggle("hidden", !(S.stand && !S.stand.err));
   if (S.base && S.base.pocket) { const k = S.base.pocket; if (document.activeElement !== $("nfcX")) $("nfcX").value = +k.relX.toFixed(2); if (document.activeElement !== $("nfcY")) $("nfcY").value = +k.relY.toFixed(2); $("nfcInfo").className = "status ok"; $("nfcInfo").textContent = `Chip center at X ${k.relX.toFixed(1)} mm, Y ${k.relY.toFixed(1)} mm from the bottom-left corner. Pocket ${(k.r * 2).toFixed(1)} mm round × ${k.depth.toFixed(2)} mm deep, from ${k.bot.toFixed(2)} to ${k.top.toFixed(2)} mm, with ${k.cover.toFixed(2)} mm of plastic on top${k.coverRaised ? ` (raised to 1 bridge layer + ${k.topL} top layers)` : ""} and at least ${n1(k.wall)} mm all round, so it's fully hidden. In Bambu Studio, add a pause at ${k.pauseZ.toFixed(2)} mm (layer ${k.pauseLayer} at ${k.layer} mm layers), drop the chip in when it pauses, then resume. For a seamless one-piece look: slice at the same ${k.layer} mm layer height, set Seam position to Back, keep the door closed and resume within a minute or two so the part stays warm.`; }
+  else if (S.base && S.base.pocketErr) { $("nfcInfo").className = "status err"; $("nfcInfo").textContent = S.base.pocketErr; }
+  else $("nfcInfo").textContent = "";
+  $("nfcRecRow").classList.toggle("hidden", !(S.base && !S.base.pocket && S.nfcRec));
   if (S.base && S.base.pocket && S.nfcAuto) { const a = S.nfcAuto, bits = [];
     if (a.grew) bits.push(`enlarged the part from ${n1(a.from.x)} × ${n1(a.from.y)} mm to ${n1(a.to.x)} × ${n1(a.to.y)} mm (same proportions)`);
     if (a.thicker) bits.push(`made it ${n1(a.to.z)} mm thick`);
     if (a.moved) bits.push("moved the chip to the widest spot");
     $("nfcInfo").textContent = `Auto-sized so the ${n1(S.base.pocket.r * 2)} mm chip fits with ${n1(S.base.pocket.wall)} mm of plastic all round: ${bits.join(", ")}. ` + $("nfcInfo").textContent; }
-  else if (S.base && S.base.pocketErr) { $("nfcInfo").className = "status err"; $("nfcInfo").textContent = S.base.pocketErr; }
-  else $("nfcInfo").textContent = "";
   $("reliefRow").classList.toggle("hidden", $("fStyle").value !== "relief");
   $("bgRow").classList.toggle("hidden", $("bgFill").value !== "ink"); $("gradRow").classList.toggle("hidden", $("bgFill").value !== "ink"); $("bg2Row").classList.toggle("hidden", !$("grad").checked);
   const canChange = !!S.design && S.aiOn; $("aChangeRow").classList.toggle("hidden", !canChange); $("aChangeBtns").classList.toggle("hidden", !canChange);
   $("mNudgeRow").classList.toggle("hidden", $("mRing").value === "none"); $("mEditOutlineRow").classList.toggle("hidden", !S.artImg);
-  const st = $("pStretch").checked; $("pH").readOnly = !st; $("stretchNote").textContent = st ? "Stretching is on: width and height can change separately, which distorts photos, faces, logos and text." : "Width and height always change together, so photos, faces, logos and text are never stretched.";
+  const st = $("pStretch").checked; artWarnUpdate(); $("stretchNote").textContent = st ? "Stretching is on: width and height can change separately, which distorts photos, faces, logos and text." : "Width and height always change together, so photos, faces, logos and text are never stretched.";
   if (S.step === "export") renderAccuracy();
   drawThumb();
   if (!$("fname").value || !S.nameEdited) $("fname").value = autoName();
@@ -3640,7 +3666,7 @@ function specFromProduct(key, overrides) {
 }
 function syncNfc() {
   const sb = (S.spec && S.spec.stand) || {}; $("standOn").checked = !!sb.on; $("standAngle").value = sb.angle != null ? sb.angle : 10; $("standD").value = sb.d || 40; $("standH").value = sb.h || 14; $("standW").value = sb.w || 0; $("standSlot").value = sb.slot || 9; $("standClear").value = sb.clear != null ? sb.clear : 0.35;
-  const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 1.6; $("nfcTopL").value = nf.topL || 7; $("nfcWall").value = nf.wall || 2;
+  const nf = (S.spec && S.spec.nfc) || {}; $("nfcOn").checked = !!nf.on; $("nfcD").value = nf.d || 26; $("nfcH").value = nf.h || 1.2; $("nfcCover").value = nf.cover != null ? nf.cover : 1.6; $("nfcTopL").value = nf.topL || 7; $("nfcWall").value = nf.wall || 2; $("nfcAuto").checked = nf.autoSize !== false;
   $("nfcLayer").value = String(nf.layer || 0.2); if (nf.pos === "manual") { if (document.activeElement !== $("nfcX")) $("nfcX").value = nf.x != null ? nf.x : ""; if (document.activeElement !== $("nfcY")) $("nfcY").value = nf.y != null ? nf.y : ""; } $("nfcPos").value = nf.pos || "center"; $("nfcZ").value = nf.zmode || "top";
 }
 function syncModelControls() {
@@ -4824,6 +4850,7 @@ async function importStlObject(st, draft) {
 // dimensions
 function setDim(k, v) {
   if (!(v > 0) || !S.spec) return;
+  if (S.spec.nfc && S.spec.nfc.on && S.spec.nfc.autoSize !== false) { S.spec.nfc.autoSize = false; $("nfcAuto").checked = false; } // your size wins; the app only recommends
   if (boxOn()) { S.box[k] = +(+v).toFixed(3); saveBox(); if (S.spec.kind === "shape") { S.dims[k] = S.box[k]; } else if (k === "z") S.dims.z = S.box.z; pinUi(); writeDims(); scheduleGeo(); return; }
   if (S.lock && k !== "z" && S.spec.kind === "shape" && (S.spec.ring !== "none" || standStem(S.spec))) return setDimKeepTab(k, v);
   const old = { ...S.dims };
@@ -4837,6 +4864,7 @@ function setDim(k, v) {
 for (const k of ["x", "y", "z"]) $("d" + k.toUpperCase()).addEventListener("input", e => setDim(k, u2mm(parseFloat(e.target.value))));
 document.querySelectorAll(".stp .sb").forEach(b => b.addEventListener("click", () => { const k = b.dataset.k, step = u2mm(+$("dStep").value || 1) * (+b.dataset.s); setDim(k, Math.max(k === "z" ? 0.6 : 1, +(S.dims[k] + step).toFixed(3))); }));
 $("lockBtn").onclick = () => setLock(!S.lock);
+$("nfcUseRec").onclick = () => { if (!S.spec || !S.spec.nfc) return; S.spec.nfc.autoSize = true; $("nfcAuto").checked = true; scheduleGeo(true); };
 $("pinBtn").onclick = () => {
   if (S.box.on) S.box.on = false; else { const d = S.dims || S.box; S.box = { on: true, x: +(+d.x).toFixed(2), y: +(+d.y).toFixed(2), z: +(+d.z).toFixed(2) }; }
   saveBox(); pinUi(); writeDims(); if (S.spec && S.spec.kind === "cutout") scheduleGeo(true);
@@ -4880,10 +4908,10 @@ for (const id of ["standOn", "standAngle", "standD", "standH", "standW", "standS
   if (old.kind === "shape" && (!!standStem(old) !== !!standStem(S.spec) || (standStem(old) && standStem(old).down !== standStem(S.spec).down))) { try { await keepBodySize(old, S.spec); } catch (e) { console.error(e); } }
   updateInfo(); scheduleGeo();
 });
-for (const id of ["nfcOn", "nfcD", "nfcH", "nfcCover", "nfcTopL", "nfcWall", "nfcLayer", "nfcX", "nfcY", "nfcPos", "nfcZ"]) $(id).addEventListener("input", () => {
+for (const id of ["nfcOn", "nfcAuto", "nfcD", "nfcH", "nfcCover", "nfcTopL", "nfcWall", "nfcLayer", "nfcX", "nfcY", "nfcPos", "nfcZ"]) $(id).addEventListener("input", () => {
   if (!S.spec) return;
   const prev = S.spec.nfc || {}, typedXY = id === "nfcX" || id === "nfcY", cur = S.base && S.base.pocket;
-  S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 1.6, 0.4, 5), topL: clamp(Math.round(+$("nfcTopL").value || 7), 1, 30), wall: clamp(+$("nfcWall").value || 2, 0.8, 10), layer: +$("nfcLayer").value || 0.2, pos: typedXY ? "manual" : $("nfcPos").value, zmode: $("nfcZ").value,
+  S.spec.nfc = { on: $("nfcOn").checked, d: clamp(+$("nfcD").value || 26, 5, 120), h: clamp(+$("nfcH").value || 1.2, 0.2, 10), cover: clamp(+$("nfcCover").value || 1.6, 0.4, 5), topL: clamp(Math.round(+$("nfcTopL").value || 7), 1, 30), wall: clamp(+$("nfcWall").value || 2, 0.8, 10), autoSize: $("nfcAuto").checked, layer: +$("nfcLayer").value || 0.2, pos: typedXY ? "manual" : $("nfcPos").value, zmode: $("nfcZ").value,
     x: typedXY || $("nfcPos").value === "manual" ? (+$("nfcX").value || 0) : prev.x, y: typedXY || $("nfcPos").value === "manual" ? (+$("nfcY").value || 0) : prev.y };
   if (id === "nfcPos" && $("nfcPos").value === "manual" && cur && !isFinite(prev.x)) { S.spec.nfc.x = +cur.relX.toFixed(2); S.spec.nfc.y = +cur.relY.toFixed(2); }
   if (typedXY) $("nfcPos").value = "manual";
@@ -5033,7 +5061,9 @@ $("aEditOutline").onclick = () => { if (S.artImg) openOutline("design"); else { 
 $("mEditOutline").onclick = () => { if (S.artImg) openOutline("measure"); };
 $("aCheck").onclick = selfCheck;
 $("aiBtn").onclick = () => setAI(!S.aiOn);
-$("pH").addEventListener("input", e => { if (!$("pStretch").checked) return; const v = u2mm(parseFloat(e.target.value)); if (!(v > 0)) return; if (getMode() !== "keep" && S.pl) S.keepW = S.pl.w; S.keepH = v; setMode("keep"); scheduleArt(); });
+$("pH").addEventListener("input", e => { const v0 = u2mm(parseFloat(e.target.value)); if (!(v0 > 0)) return;
+  if (!$("pStretch").checked) { if (!S.pl || !(S.pl.h > 0)) return; S.keepW = v0 * S.pl.w / S.pl.h; S.keepH = 0; setMode("keep"); dropSnapRot(); scheduleArt(); return; } // proportional: height sets the width too
+  const v = v0; if (getMode() !== "keep" && S.pl) S.keepW = S.pl.w; S.keepH = v; setMode("keep"); scheduleArt(); });
 // calibration (saved on this device)
 function shiftTxt(c) { const x = -c.dx, y = -c.dy, f = (v, a, b) => `${Math.abs(v).toFixed(2)} mm ${v >= 0 ? a : b}`; return `moves artwork ${f(x, "right", "left")} and ${f(y, "down", "up")}`; }
 function calInputs() { return { dx: +$("calDx").value || 0, dy: +$("calDy").value || 0, w: +$("calW").value || 100, h: +$("calH").value || 60 }; }
